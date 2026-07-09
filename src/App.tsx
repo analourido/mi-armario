@@ -58,7 +58,7 @@ import {
   ShoppingBag,
   Sparkles,
   Store,
-  Suitcase,
+  Luggage,
   Trash2,
   Undo2,
   Upload,
@@ -1318,6 +1318,179 @@ function recommendationOverview(data: Data) {
   };
 }
 
+const tripTypes: Record<Trip["type"], string> = {
+  vacation: "Vacaciones",
+  work: "Trabajo",
+  festival: "Festival",
+  wedding: "Boda",
+  beach: "Playa",
+  city: "Ciudad",
+  other: "Otro",
+};
+
+const packingTemplates = [
+  "cargador",
+  "neceser",
+  "documentación",
+  "pijama",
+  "ropa interior",
+  "maquillaje",
+  "medicación",
+  "gafas",
+  "bañador",
+] as const;
+
+function tripWeatherKey(tripId: string) {
+  return `trip:${tripId}`;
+}
+
+function tripDates(trip: Pick<Trip, "startDate" | "endDate">) {
+  const start = new Date(`${trip.startDate}T12:00:00`);
+  const end = new Date(`${trip.endDate}T12:00:00`);
+  const dates: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+function tripLength(trip: Pick<Trip, "startDate" | "endDate">) {
+  return tripDates(trip).length;
+}
+
+function tripForecast(cache: WeatherCache[], tripId: string) {
+  return cache
+    .filter((entry) => entry.locationId === tripWeatherKey(tripId))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((entry) => entry.data as DailyWeatherSummary);
+}
+
+async function refreshTripWeather(trip: Trip, days = 7) {
+  if (trip.latitude == null || trip.longitude == null) return [];
+  const forecast = await fetchWeatherForecast(
+    { latitude: trip.latitude, longitude: trip.longitude },
+    Math.min(days, 16),
+  );
+  const fetchedAt = now();
+  await db.weatherCache.bulkPut(
+    forecast.map((entry) => ({
+      id: `${tripWeatherKey(trip.id)}:${entry.date}`,
+      locationId: tripWeatherKey(trip.id),
+      date: entry.date,
+      data: entry,
+      fetchedAt,
+    })),
+  );
+  return forecast;
+}
+
+function tripStats(data: Data, trip: Trip) {
+  const packing = data.tripPackingItems.filter((item) => item.tripId === trip.id);
+  const planned = data.tripPlannedOutfits.filter((item) => item.tripId === trip.id);
+  const dates = tripDates(trip);
+  const totalItems = packing.reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const completed = packing.filter((item) => item.checked).reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const pending = totalItems - completed;
+  const coveredDates = new Set(planned.map((item) => item.date).filter(Boolean));
+  const daysWithoutOutfit = dates.filter((date) => !coveredDates.has(date)).length;
+  return {
+    totalItems,
+    completed,
+    pending,
+    outfitsPlanned: planned.length,
+    daysWithoutOutfit,
+    dates,
+    packing,
+    planned,
+  };
+}
+
+function tripPackingLabel(item: TripPackingItem, items: ClothingItem[]) {
+  const clothing = item.clothingItemId
+    ? items.find((entry) => entry.id === item.clothingItemId)
+    : undefined;
+  return clothing?.name || item.customName || "Elemento";
+}
+
+function tripPackingMeta(item: TripPackingItem, items: ClothingItem[]) {
+  const clothing = item.clothingItemId
+    ? items.find((entry) => entry.id === item.clothingItemId)
+    : undefined;
+  return clothing?.category || item.category || "Checklist";
+}
+
+function tripRecommendationText(
+  trip: Trip,
+  forecast: DailyWeatherSummary[],
+  planned: TripPlannedOutfit[],
+) {
+  const days = tripLength(trip);
+  const avgMax = forecast.length
+    ? Math.round(
+        forecast.reduce((sum, day) => sum + day.temperatureMax, 0) / forecast.length,
+      )
+    : undefined;
+  const rainy = forecast.some((day) => day.precipitationProbabilityMax >= 40);
+  const windy = forecast.some((day) => day.windSpeedMax >= 26);
+  const lines = [
+    `Vas ${days} ${days === 1 ? "día" : "días"} a ${trip.destinationName}.`,
+  ];
+  if (avgMax != null) {
+    lines.push(
+      avgMax > 23
+        ? "Parece un destino cálido: prioriza ropa ligera, calzado cómodo y una capa fina para la noche."
+        : avgMax >= 17
+          ? "Suena a entretiempo amable: mezcla looks ligeros con una capa versátil."
+          : "Parece fresco: mejor chaqueta, zapato cerrado y prendas fáciles de repetir.",
+    );
+  }
+  if (rainy) lines.push("Hay riesgo de lluvia: mete paraguas o capa ligera y evita depender solo de calzado abierto.");
+  if (windy) lines.push("Puede hacer viento: una capa exterior compacta te dará margen.");
+  if (trip.type === "beach") lines.push("Añade bañador, gafas de sol y ropa fresca de recambio.");
+  if (trip.type === "work") lines.push("Reserva looks de trabajo cómodos y algo más arreglado para reuniones o cenas.");
+  if (trip.type === "festival") lines.push("Piensa en calzado resistente, capas ligeras y una prenda fácil de repetir.");
+  if (trip.type === "wedding") lines.push("No olvides el look principal y una opción de apoyo por si cambia el clima.");
+  if (trip.type === "city") lines.push("Te irá bien calzado cómodo, bolso práctico y capas que combinen entre sí.");
+  if (!planned.length) lines.push("Empieza planificando al menos los días más importantes para evitar olvidos de última hora.");
+  return lines.slice(0, 4);
+}
+
+function tripUsageInsights(data: Data, trip: Trip) {
+  const planned = data.tripPlannedOutfits.filter((entry) => entry.tripId === trip.id);
+  const packedClothing = data.tripPackingItems
+    .filter((entry) => entry.tripId === trip.id && entry.clothingItemId)
+    .map((entry) => entry.clothingItemId as string);
+  const counts = new Map<string, number>();
+  planned.forEach((outfit) =>
+    outfit.clothingItemIds.forEach((id) =>
+      counts.set(id, (counts.get(id) || 0) + 1),
+    ),
+  );
+  const repeated = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([id, count]) => ({
+      item: data.items.find((entry) => entry.id === id),
+      count,
+    }))
+    .filter((entry) => entry.item);
+  const unusedPacked = packedClothing
+    .filter((id) => !counts.has(id))
+    .map((id) => data.items.find((entry) => entry.id === id))
+    .filter(Boolean) as ClothingItem[];
+  return {
+    repeated,
+    unusedPacked,
+  };
+}
+
+function nearestTrip(trips: Trip[]) {
+  return trips
+    .filter((trip) => trip.endDate >= today())
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
+}
+
 function Button({
   children,
   variant = "primary",
@@ -1463,7 +1636,7 @@ const nav = [
   ["/", Home, "Inicio"],
   ["/armario", Shirt, "Armario"],
   ["/que-ponerme", Cloud, "Qué ponerme"],
-  ["/viajes", Suitcase, "Viajes"],
+  ["/viajes", Luggage, "Viajes"],
   ["/espacios", MapPin, "Espacios"],
   ["/outfits", Heart, "Outfits"],
   ["/usos", CalendarDays, "Usos"],
@@ -1527,6 +1700,7 @@ function Dashboard() {
   const d = useData(),
     n = useNavigate();
   const contextOverview = recommendationOverview(d);
+  const upcomingTrip = nearestTrip(d.trips);
   useEffect(() => {
     if (
       contextOverview.location?.id &&
@@ -1596,6 +1770,10 @@ function Dashboard() {
   const latest = [...activeItems]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 4);
+  const upcomingTripStats = upcomingTrip ? tripStats(d, upcomingTrip) : undefined;
+  const upcomingTripForecast = upcomingTrip
+    ? tripForecast(d.weatherCache, upcomingTrip.id)[0]
+    : undefined;
   if (!d.items.length && !d.orders.length && !d.sales.length && !d.wishlist.length)
     return <Welcome onAdd={() => n("/prenda/nueva")} />;
   return (
@@ -1677,6 +1855,13 @@ function Dashboard() {
             <small>Clima, rutina y eventos en una recomendación</small>
           </span>
         </NavLink>
+        <NavLink to="/viajes">
+          <Luggage />
+          <span>
+            <b>Planear viaje</b>
+            <small>Maleta, outfits y clima del destino</small>
+          </span>
+        </NavLink>
         <NavLink to="/pedidos">
           <PackagePlus />
           <span>
@@ -1744,6 +1929,34 @@ function Dashboard() {
           </div>
         </div>
       </section>
+      {upcomingTrip && upcomingTripStats && (
+        <section className="panel location-summary">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">VIAJE PRÓXIMO</p>
+              <h2>{upcomingTrip.name}</h2>
+            </div>
+            <NavLink to={`/viajes/${upcomingTrip.id}`}>Abrir viaje</NavLink>
+          </div>
+          <div className="location-summary-grid">
+            <div>
+              <b>{upcomingTrip.destinationName}</b>
+              <small>
+                {dateFmt(upcomingTrip.startDate)} → {dateFmt(upcomingTrip.endDate)}
+                {upcomingTripForecast
+                  ? ` · ${upcomingTripForecast.description} ${Math.round(upcomingTripForecast.temperatureMin)}–${Math.round(upcomingTripForecast.temperatureMax)}°C`
+                  : ""}
+              </small>
+            </div>
+            <div>
+              <b>{upcomingTripStats.pending} pendientes</b>
+              <small>
+                {upcomingTripStats.completed} listos · {upcomingTripStats.daysWithoutOutfit} días sin outfit
+              </small>
+            </div>
+          </div>
+        </section>
+      )}
       <section className="panel location-summary">
         <div className="section-title">
           <div>
@@ -3975,6 +4188,1075 @@ function EventModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+function TripCard({
+  trip,
+  data,
+  onEdit,
+  onDelete,
+}: {
+  trip: Trip;
+  data: Data;
+  onEdit: (trip: Trip) => void;
+  onDelete: (trip: Trip) => void;
+}) {
+  const stats = tripStats(data, trip);
+  const forecast = tripForecast(data.weatherCache, trip.id)[0];
+  return (
+    <article className="trip-card">
+      <NavLink to={`/viajes/${trip.id}`} className="trip-card-copy">
+        <p className="eyebrow">{tripTypes[trip.type]}</p>
+        <h3>{trip.name}</h3>
+        <p>{trip.destinationName}</p>
+        <small>
+          {dateFmt(trip.startDate)} → {dateFmt(trip.endDate)} · {tripLength(trip)} días
+        </small>
+        <div className="trip-meta">
+          <span>{stats.pending} pendientes</span>
+          <span>{stats.outfitsPlanned} outfits</span>
+          <span>{stats.daysWithoutOutfit} días sin look</span>
+          {forecast && (
+            <span>
+              {forecast.description} · {Math.round(forecast.temperatureMin)}–{Math.round(forecast.temperatureMax)}°C
+            </span>
+          )}
+        </div>
+      </NavLink>
+      <div className="space-card-actions">
+        <button className="icon-btn" onClick={() => onEdit(trip)}>
+          <Pencil />
+        </button>
+        <button className="icon-btn" onClick={() => onDelete(trip)}>
+          <Trash2 />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function TripModal({
+  trip,
+  close,
+}: {
+  trip?: Trip;
+  close: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: trip?.name || "",
+    destinationName: trip?.destinationName || "",
+    latitude: trip?.latitude?.toString() || "",
+    longitude: trip?.longitude?.toString() || "",
+    startDate: trip?.startDate || today(),
+    endDate: trip?.endDate || today(),
+    type: trip?.type || ("vacation" as Trip["type"]),
+    notes: trip?.notes || "",
+  });
+  const [query, setQuery] = useState(trip?.destinationName || ""),
+    [results, setResults] = useState<WeatherLocationSearchResult[]>([]),
+    [busy, setBusy] = useState(false);
+
+  async function searchDestination() {
+    if (query.trim().length < 2) return;
+    setBusy(true);
+    try {
+      setResults(await searchWeatherLocations(query));
+    } catch {
+      setResults([]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.destinationName.trim()) return;
+    const stamp = now();
+    const record: Trip = {
+      id: trip?.id || uid(),
+      name: form.name.trim(),
+      destinationName: form.destinationName.trim(),
+      latitude: form.latitude ? +form.latitude : undefined,
+      longitude: form.longitude ? +form.longitude : undefined,
+      startDate: form.startDate,
+      endDate: form.endDate < form.startDate ? form.startDate : form.endDate,
+      type: form.type,
+      notes: form.notes || undefined,
+      createdAt: trip?.createdAt || stamp,
+      updatedAt: stamp,
+    };
+    await db.trips.put(record);
+    close();
+  }
+
+  return (
+    <Modal title={trip ? "Editar viaje" : "Nuevo viaje"} onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          Nombre *
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Ej. Lisboa en mayo"
+            required
+          />
+        </label>
+        <label>
+          Tipo de viaje
+          <select
+            value={form.type}
+            onChange={(e) => setForm({ ...form, type: e.target.value as Trip["type"] })}
+          >
+            {Object.entries(tripTypes).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="full">
+          Destino *
+          <input
+            value={form.destinationName}
+            onChange={(e) => setForm({ ...form, destinationName: e.target.value })}
+            placeholder="Ej. Lisboa"
+            required
+          />
+        </label>
+        <label className="full">
+          Buscar destino y guardar coordenadas
+          <div className="inline-input">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Busca ciudad, playa o destino"
+            />
+            <Button type="button" variant="secondary" onClick={searchDestination} disabled={busy}>
+              <Search /> Buscar
+            </Button>
+          </div>
+        </label>
+        {!!results.length && (
+          <div className="full space-list">
+            {results.slice(0, 5).map((result) => (
+              <button
+                type="button"
+                className="space-list-row"
+                key={result.id}
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    destinationName: `${result.name}${result.admin1 ? `, ${result.admin1}` : ""}`,
+                    latitude: String(result.latitude),
+                    longitude: String(result.longitude),
+                  })
+                }
+              >
+                <div>
+                  <b>{result.name}</b>
+                  <small>
+                    {result.admin1 || result.countryCode || "—"} · {result.latitude.toFixed(3)}, {result.longitude.toFixed(3)}
+                  </small>
+                </div>
+                <span>Usar</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <label>
+          Fecha inicio
+          <input
+            type="date"
+            value={form.startDate}
+            onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+            required
+          />
+        </label>
+        <label>
+          Fecha fin
+          <input
+            type="date"
+            value={form.endDate}
+            onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+            required
+          />
+        </label>
+        <label className="full">
+          Notas
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="Planes clave, cenas, logística..."
+          />
+        </label>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button>{trip ? "Guardar viaje" : "Crear viaje"}</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TripPackingModal({
+  tripId,
+  data,
+  item,
+  close,
+}: {
+  tripId: string;
+  data: Data;
+  item?: TripPackingItem;
+  close: () => void;
+}) {
+  const clothing = item?.clothingItemId
+    ? data.items.find((entry) => entry.id === item.clothingItemId)
+    : undefined;
+  const [mode, setMode] = useState<"clothing" | "manual">(
+    item?.clothingItemId ? "clothing" : "manual",
+  );
+  const [form, setForm] = useState({
+    clothingItemId: item?.clothingItemId || "",
+    customName: item?.customName || clothing?.name || "",
+    category: item?.category || clothing?.category || "",
+    quantity: String(item?.quantity || 1),
+    checked: item?.checked || false,
+    notes: item?.notes || "",
+  });
+  const activeItems = data.items.filter((entry) => !entry.isArchived);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const stamp = now();
+    await db.tripPackingItems.put({
+      id: item?.id || uid(),
+      tripId,
+      clothingItemId: mode === "clothing" ? form.clothingItemId || undefined : undefined,
+      customName: mode === "manual" ? form.customName.trim() || undefined : undefined,
+      category:
+        mode === "manual"
+          ? form.category.trim() || undefined
+          : activeItems.find((entry) => entry.id === form.clothingItemId)?.category,
+      quantity: form.quantity ? Math.max(1, +form.quantity) : 1,
+      checked: form.checked,
+      notes: form.notes || undefined,
+      createdAt: item?.createdAt || stamp,
+      updatedAt: stamp,
+    });
+    close();
+  }
+
+  async function remove() {
+    if (!item || !confirm("¿Eliminar este elemento de la maleta?")) return;
+    await softDeleteRecords("tripPackingItems", [item.id]);
+    close();
+  }
+
+  return (
+    <Modal title={item ? "Editar elemento" : "Añadir a la maleta"} onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <div className="full small-tabs">
+          <button
+            type="button"
+            className={mode === "clothing" ? "active" : ""}
+            onClick={() => setMode("clothing")}
+          >
+            Prenda del armario
+          </button>
+          <button
+            type="button"
+            className={mode === "manual" ? "active" : ""}
+            onClick={() => setMode("manual")}
+          >
+            Elemento manual
+          </button>
+        </div>
+        {mode === "clothing" ? (
+          <label className="full">
+            Prenda
+            <select
+              value={form.clothingItemId}
+              onChange={(e) => {
+                const picked = activeItems.find((entry) => entry.id === e.target.value);
+                setForm({
+                  ...form,
+                  clothingItemId: e.target.value,
+                  category: picked?.category || "",
+                });
+              }}
+              required
+            >
+              <option value="">Selecciona una prenda</option>
+              {activeItems.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name} · {entry.category}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <>
+            <label>
+              Nombre
+              <input
+                value={form.customName}
+                onChange={(e) => setForm({ ...form, customName: e.target.value })}
+                placeholder="Ej. cargador"
+                required
+              />
+            </label>
+            <label>
+              Categoría
+              <input
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                placeholder="Ej. tecnología"
+              />
+            </label>
+            <div className="full">
+              <p className="field-label">Ideas rápidas</p>
+              <div className="chips">
+                {packingTemplates.map((entry) => (
+                  <button
+                    key={entry}
+                    type="button"
+                    onClick={() => setForm({ ...form, customName: entry })}
+                  >
+                    {entry}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+        <label>
+          Cantidad
+          <input
+            type="number"
+            min="1"
+            value={form.quantity}
+            onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+          />
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={form.checked}
+            onChange={(e) => setForm({ ...form, checked: e.target.checked })}
+          />{" "}
+          Ya está en la maleta
+        </label>
+        <label className="full">
+          Notas
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="Algo que quieras recordar."
+          />
+        </label>
+        <div className="modal-actions">
+          {item && (
+            <Button type="button" variant="ghost" onClick={remove}>
+              Eliminar
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button>Guardar</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TripPlannedOutfitModal({
+  trip,
+  data,
+  planned,
+  seedDate,
+  close,
+}: {
+  trip: Trip;
+  data: Data;
+  planned?: TripPlannedOutfit;
+  seedDate?: string;
+  close: () => void;
+}) {
+  const tripDays = tripDates(trip);
+  const [mode, setMode] = useState<"outfit" | "manual">(
+    planned?.outfitId ? "outfit" : "manual",
+  );
+  const [form, setForm] = useState({
+    date: planned?.date || seedDate || trip.startDate,
+    eventLabel: planned?.eventLabel || "",
+    outfitId: planned?.outfitId || "",
+    notes: planned?.notes || "",
+    clothingItemIds: planned?.clothingItemIds || [],
+  });
+  const activeItems = data.items.filter((entry) => !entry.isArchived);
+
+  function chooseOutfit(id: string) {
+    const picked = data.outfits.find((entry) => entry.id === id);
+    setForm({
+      ...form,
+      outfitId: id,
+      clothingItemIds: picked?.clothingItemIds || [],
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!form.clothingItemIds.length) return;
+    const stamp = now();
+    await db.tripPlannedOutfits.put({
+      id: planned?.id || uid(),
+      tripId: trip.id,
+      date: form.date || undefined,
+      eventLabel: form.eventLabel || undefined,
+      outfitId: mode === "outfit" ? form.outfitId || undefined : undefined,
+      clothingItemIds: form.clothingItemIds,
+      notes: form.notes || undefined,
+      createdAt: planned?.createdAt || stamp,
+      updatedAt: stamp,
+    });
+    close();
+  }
+
+  async function remove() {
+    if (!planned || !confirm("¿Eliminar este outfit planificado?")) return;
+    await softDeleteRecords("tripPlannedOutfits", [planned.id]);
+    close();
+  }
+
+  return (
+    <Modal title={planned ? "Editar outfit del viaje" : "Planificar outfit"} onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <div className="full small-tabs">
+          <button
+            type="button"
+            className={mode === "outfit" ? "active" : ""}
+            onClick={() => setMode("outfit")}
+          >
+            Outfit existente
+          </button>
+          <button
+            type="button"
+            className={mode === "manual" ? "active" : ""}
+            onClick={() => setMode("manual")}
+          >
+            Selección manual
+          </button>
+        </div>
+        <label>
+          Día
+          <select
+            value={form.date}
+            onChange={(e) => setForm({ ...form, date: e.target.value })}
+          >
+            {tripDays.map((date) => (
+              <option key={date} value={date}>
+                {dayLabel(date)} · {dateFmt(date)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Evento o momento
+          <input
+            value={form.eventLabel}
+            onChange={(e) => setForm({ ...form, eventLabel: e.target.value })}
+            placeholder="Ej. cena, boda, paseo..."
+          />
+        </label>
+        {mode === "outfit" ? (
+          <label className="full">
+            Outfit
+            <select
+              value={form.outfitId}
+              onChange={(e) => chooseOutfit(e.target.value)}
+              required
+            >
+              <option value="">Selecciona un outfit</option>
+              {data.outfits.map((outfit) => (
+                <option key={outfit.id} value={outfit.id}>
+                  {outfit.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <div className="full">
+          <p className="field-label">Prendas ({form.clothingItemIds.length})</p>
+          <div className="picker">
+            {activeItems.map((entry) => (
+              <button
+                type="button"
+                className={form.clothingItemIds.includes(entry.id) ? "picked" : ""}
+                key={entry.id}
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    clothingItemIds: current.clothingItemIds.includes(entry.id)
+                      ? current.clothingItemIds.filter((id) => id !== entry.id)
+                      : [...current.clothingItemIds, entry.id],
+                  }))
+                }
+              >
+                <ItemThumb item={entry} />
+                <span>{entry.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="full">
+          Notas
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="Qué zapato va mejor, si se repite prenda, etc."
+          />
+        </label>
+        <div className="modal-actions">
+          {planned && (
+            <Button type="button" variant="ghost" onClick={remove}>
+              Eliminar
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button disabled={!form.clothingItemIds.length}>Guardar</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TripsPage() {
+  const d = useData(),
+    n = useNavigate();
+  const [open, setOpen] = useState(false),
+    [editing, setEditing] = useState<Trip | undefined>();
+  const trips = [...d.trips].sort(
+    (a, b) => a.startDate.localeCompare(b.startDate) || b.updatedAt.localeCompare(a.updatedAt),
+  );
+
+  async function removeTrip(trip: Trip) {
+    if (!confirm(`¿Eliminar “${trip.name}” y su planificación?`)) return;
+    const packingIds = d.tripPackingItems
+      .filter((entry) => entry.tripId === trip.id)
+      .map((entry) => entry.id);
+    const plannedIds = d.tripPlannedOutfits
+      .filter((entry) => entry.tripId === trip.id)
+      .map((entry) => entry.id);
+    await db.transaction(
+      "rw",
+      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache],
+      async () => {
+        if (packingIds.length) await softDeleteRecords("tripPackingItems", packingIds);
+        if (plannedIds.length) await softDeleteRecords("tripPlannedOutfits", plannedIds);
+        await softDeleteRecords("trips", [trip.id]);
+        const weatherKeys = d.weatherCache
+          .filter((entry) => entry.locationId === tripWeatherKey(trip.id))
+          .map((entry) => entry.id);
+        if (weatherKeys.length) await db.weatherCache.bulkDelete(weatherKeys);
+      },
+    );
+  }
+
+  return (
+    <>
+      <PageHead eyebrow={`${trips.length} VIAJES`} title="Viajes">
+        <Button
+          onClick={() => {
+            setEditing(undefined);
+            setOpen(true);
+          }}
+        >
+          <Plus /> Crear viaje
+        </Button>
+      </PageHead>
+      {trips.length ? (
+        <div className="trip-grid">
+          {trips.map((trip) => (
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              data={d}
+              onEdit={(value) => {
+                setEditing(value);
+                setOpen(true);
+              }}
+              onDelete={removeTrip}
+            />
+          ))}
+        </div>
+      ) : (
+        <Empty
+          title="Tus viajes vivirán aquí"
+          text="Crea un viaje para planificar outfits, consultar el clima del destino y preparar una maleta sin olvidos."
+          action={<Button onClick={() => setOpen(true)}>Crear primer viaje</Button>}
+        />
+      )}
+      {open && (
+        <TripModal
+          trip={editing}
+          close={() => {
+            setOpen(false);
+            setEditing(undefined);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function TripDetail() {
+  const { id } = useParams(),
+    d = useData(),
+    n = useNavigate(),
+    trip = d.trips.find((entry) => entry.id === id);
+  const [tripOpen, setTripOpen] = useState(false),
+    [packingOpen, setPackingOpen] = useState(false),
+    [plannedOpen, setPlannedOpen] = useState(false),
+    [packingEditing, setPackingEditing] = useState<TripPackingItem | undefined>(),
+    [plannedEditing, setPlannedEditing] = useState<TripPlannedOutfit | undefined>(),
+    [seedDate, setSeedDate] = useState<string | undefined>(),
+    [tab, setTab] = useState<"summary" | "packing" | "outfits">("summary"),
+    [refreshingWeather, setRefreshingWeather] = useState(false),
+    [weatherError, setWeatherError] = useState("");
+  if (!trip)
+    return <Empty title="Viaje no encontrado" text="Puede que ya no exista." />;
+  const currentTrip = trip;
+  const stats = tripStats(d, currentTrip);
+  const forecast = tripForecast(d.weatherCache, currentTrip.id);
+  const insights = tripUsageInsights(d, currentTrip);
+  const upcoming = currentTrip.endDate >= today();
+  const groupedPlanned = stats.dates.map((date) => ({
+    date,
+    outfits: stats.planned.filter((entry) => entry.date === date),
+    weather: forecast.find((entry) => entry.date === date),
+  }));
+  const manualPlanned = stats.planned.filter((entry) => !entry.date);
+
+  useEffect(() => {
+    if (currentTrip.latitude == null || currentTrip.longitude == null || forecast.length) return;
+    setRefreshingWeather(true);
+    refreshTripWeather(currentTrip, Math.max(tripLength(currentTrip), 3))
+      .catch(() => setWeatherError("No hemos podido traer el clima del destino ahora mismo."))
+      .finally(() => setRefreshingWeather(false));
+  }, [currentTrip, forecast.length]);
+
+  async function refreshDestinationWeather() {
+    if (currentTrip.latitude == null || currentTrip.longitude == null) {
+      setWeatherError("Guarda un destino con coordenadas para consultar el clima.");
+      return;
+    }
+    setRefreshingWeather(true);
+    setWeatherError("");
+    try {
+      await refreshTripWeather(currentTrip, Math.max(tripLength(currentTrip), 3));
+    } catch {
+      setWeatherError("No hemos podido traer el clima del destino ahora mismo.");
+    } finally {
+      setRefreshingWeather(false);
+    }
+  }
+
+  async function togglePacked(item: TripPackingItem) {
+    await db.tripPackingItems.update(item.id, {
+      checked: !item.checked,
+      updatedAt: now(),
+    });
+  }
+
+  async function deleteTrip() {
+    if (!confirm(`¿Eliminar “${currentTrip.name}” y toda su planificación?`)) return;
+    const weatherKeys = d.weatherCache
+      .filter((entry) => entry.locationId === tripWeatherKey(currentTrip.id))
+      .map((entry) => entry.id);
+    await db.transaction(
+      "rw",
+      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache],
+      async () => {
+        if (stats.packing.length)
+          await softDeleteRecords(
+            "tripPackingItems",
+            stats.packing.map((entry) => entry.id),
+          );
+        if (stats.planned.length)
+          await softDeleteRecords(
+            "tripPlannedOutfits",
+            stats.planned.map((entry) => entry.id),
+          );
+        await softDeleteRecords("trips", [currentTrip.id]);
+        if (weatherKeys.length) await db.weatherCache.bulkDelete(weatherKeys);
+      },
+    );
+    n("/viajes");
+  }
+
+  return (
+    <>
+      <button className="back" onClick={() => n(-1)}>
+        <ChevronLeft /> Volver
+      </button>
+      <PageHead eyebrow={tripTypes[currentTrip.type].toUpperCase()} title={currentTrip.name}>
+        <div className="actions">
+          <Button variant="secondary" onClick={() => setTripOpen(true)}>
+            <Pencil /> Editar
+          </Button>
+          <Button variant="secondary" onClick={refreshDestinationWeather} disabled={refreshingWeather}>
+            <Cloud /> {refreshingWeather ? "Clima..." : "Actualizar clima"}
+          </Button>
+          <Button variant="ghost" onClick={deleteTrip}>
+            <Trash2 /> Eliminar
+          </Button>
+        </div>
+      </PageHead>
+      <section className="panel trip-hero">
+        <div>
+          <p className="eyebrow">DESTINO</p>
+          <h2>{currentTrip.destinationName}</h2>
+          <p className="muted">
+            {dateFmt(currentTrip.startDate)} → {dateFmt(currentTrip.endDate)} · {tripLength(currentTrip)} días
+          </p>
+          {currentTrip.notes && <p className="lead">{currentTrip.notes}</p>}
+        </div>
+        <div className="trip-hero-side">
+          <div className="space-capacity">
+            <b>{stats.pending}</b>
+            <small>pendientes en la maleta</small>
+          </div>
+          <div className="space-capacity">
+            <b>{stats.daysWithoutOutfit}</b>
+            <small>días todavía sin outfit</small>
+          </div>
+        </div>
+      </section>
+      <div className="stat-grid">
+        <Stat label="Items en maleta" value={stats.totalItems} icon={<Luggage />} />
+        <Stat label="Completados" value={stats.completed} icon={<Check />} />
+        <Stat label="Outfits planificados" value={stats.outfitsPlanned} icon={<Heart />} />
+        <Stat label="Días sin outfit" value={stats.daysWithoutOutfit} icon={<CalendarDays />} />
+      </div>
+      <div className="tabs">
+        <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>
+          Resumen
+        </button>
+        <button className={tab === "packing" ? "active" : ""} onClick={() => setTab("packing")}>
+          Maleta
+        </button>
+        <button className={tab === "outfits" ? "active" : ""} onClick={() => setTab("outfits")}>
+          Outfits
+        </button>
+      </div>
+      {(tab === "summary" || window.innerWidth > 760) && (
+        <>
+          <div className="two-col">
+            <section className="panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">RECOMENDACIONES</p>
+                  <h2>Qué tiene sentido llevar</h2>
+                </div>
+              </div>
+              <div className="trip-guidance">
+                {tripRecommendationText(currentTrip, forecast, stats.planned).map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+              {weatherError && <p className="form-error">{weatherError}</p>}
+            </section>
+            <section className="panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">CLIMA DEL DESTINO</p>
+                  <h2>Vista rápida</h2>
+                </div>
+              </div>
+              {forecast.length ? (
+                <div className="forecast-strip">
+                  {forecast.slice(0, tripLength(currentTrip)).map((day) => (
+                    <div className="forecast-pill" key={day.date}>
+                      <b>{dayLabel(day.date).slice(0, 3)}</b>
+                      <span>{Math.round(day.temperatureMin)}–{Math.round(day.temperatureMax)}°C</span>
+                      <small>{day.description}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty
+                  title="Clima aún no descargado"
+                  text={
+                    currentTrip.latitude != null && currentTrip.longitude != null
+                      ? "Pulsa actualizar clima para consultar el destino."
+                      : "Puedes guardar el viaje igualmente aunque no haya coordenadas todavía."
+                  }
+                />
+              )}
+            </section>
+          </div>
+          <div className="two-col">
+            <section className="panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">REPETICIÓN INTELIGENTE</p>
+                  <h2>Qué parece versátil y qué quizá sobra</h2>
+                </div>
+              </div>
+              <div className="trip-guidance">
+                {insights.repeated.length ? (
+                  <p>
+                    Se repiten bien: {insights.repeated
+                      .slice(0, 4)
+                      .map((entry) => `${entry.item?.name} (${entry.count})`)
+                      .join(" · ")}
+                  </p>
+                ) : (
+                  <p>Todavía no hay prendas repetidas entre outfits planificados.</p>
+                )}
+                {insights.unusedPacked.length ? (
+                  <p>
+                    Quizá sobran por ahora: {insights.unusedPacked
+                      .slice(0, 4)
+                      .map((item) => item.name)
+                      .join(" · ")}
+                  </p>
+                ) : (
+                  <p>De momento lo que has metido tiene alguna función clara dentro del viaje.</p>
+                )}
+              </div>
+            </section>
+            <section className="panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">ESTADO DEL VIAJE</p>
+                  <h2>Cómo va tu preparación</h2>
+                </div>
+              </div>
+              <div className="trip-check-grid">
+                <div>
+                  <b>{stats.completed}/{stats.totalItems || 0}</b>
+                  <small>Checklist completado</small>
+                </div>
+                <div>
+                  <b>{stats.outfitsPlanned}</b>
+                  <small>Outfits ya preparados</small>
+                </div>
+                <div>
+                  <b>{stats.daysWithoutOutfit}</b>
+                  <small>Días aún por planificar</small>
+                </div>
+                <div>
+                  <b>{upcoming ? "Próximo" : "Pasado"}</b>
+                  <small>{currentTrip.destinationName}</small>
+                </div>
+              </div>
+            </section>
+          </div>
+        </>
+      )}
+      {(tab === "packing" || window.innerWidth > 760) && (
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">CHECKLIST DE MALETA</p>
+              <h2>Qué ya está dentro y qué falta</h2>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPackingEditing(undefined);
+                setPackingOpen(true);
+              }}
+            >
+              <Plus /> Añadir item
+            </Button>
+          </div>
+          {stats.packing.length ? (
+            <div className="packing-list">
+              {stats.packing.map((item) => {
+                const clothing = item.clothingItemId
+                  ? d.items.find((entry) => entry.id === item.clothingItemId)
+                  : undefined;
+                return (
+                  <article className={`packing-row ${item.checked ? "checked" : ""}`} key={item.id}>
+                    <button className="check-toggle" onClick={() => togglePacked(item)}>
+                      {item.checked ? <Check /> : null}
+                    </button>
+                    <div className="packing-main">
+                      <b>{tripPackingLabel(item, d.items)}</b>
+                      <small>
+                        {tripPackingMeta(item, d.items)}
+                        {item.quantity && item.quantity > 1 ? ` · x${item.quantity}` : ""}
+                        {item.notes ? ` · ${item.notes}` : ""}
+                      </small>
+                    </div>
+                    {clothing ? (
+                      <NavLink className="packing-thumb" to={`/prenda/${clothing.id}`}>
+                        <ItemThumb item={clothing} />
+                      </NavLink>
+                    ) : (
+                      <div className="packing-thumb placeholder">
+                        <Luggage />
+                      </div>
+                    )}
+                    <button
+                      className="icon-btn"
+                      onClick={() => {
+                        setPackingEditing(item);
+                        setPackingOpen(true);
+                      }}
+                    >
+                      <Pencil />
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <Empty
+              title="Tu maleta empieza aquí"
+              text="Añade prendas del armario o elementos manuales como cargador, neceser o documentación."
+              action={<Button onClick={() => setPackingOpen(true)}>Añadir primer item</Button>}
+            />
+          )}
+        </section>
+      )}
+      {(tab === "outfits" || window.innerWidth > 760) && (
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">OUTFITS DEL VIAJE</p>
+              <h2>Un look por día o por momento</h2>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPlannedEditing(undefined);
+                setSeedDate(currentTrip.startDate);
+                setPlannedOpen(true);
+              }}
+            >
+              <Plus /> Planificar outfit
+            </Button>
+          </div>
+          <div className="trip-day-grid">
+            {groupedPlanned.map((day) => (
+              <div className="trip-day-card" key={day.date}>
+                <header>
+                  <div>
+                    <b>{dayLabel(day.date)}</b>
+                    <small>{dateFmt(day.date)}</small>
+                  </div>
+                  {day.weather && (
+                    <span>
+                      {Math.round(day.weather.temperatureMin)}–{Math.round(day.weather.temperatureMax)}°C
+                    </span>
+                  )}
+                </header>
+                {day.outfits.length ? (
+                  <div className="trip-planned-list">
+                    {day.outfits.map((planned) => (
+                      <button
+                        className="trip-planned-row"
+                        key={planned.id}
+                        onClick={() => {
+                          setPlannedEditing(planned);
+                          setSeedDate(planned.date);
+                          setPlannedOpen(true);
+                        }}
+                      >
+                        <div className="trip-planned-thumbs">
+                          {planned.clothingItemIds.slice(0, 3).map((itemId) => {
+                            const item = d.items.find((entry) => entry.id === itemId);
+                            return item ? <ItemThumb key={itemId} item={item} /> : null;
+                          })}
+                        </div>
+                        <span>
+                          <b>{planned.eventLabel || "Look del día"}</b>
+                          <small>{planned.notes || `${planned.clothingItemIds.length} prendas`}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    className="empty-rail"
+                    onClick={() => {
+                      setPlannedEditing(undefined);
+                      setSeedDate(day.date);
+                      setPlannedOpen(true);
+                    }}
+                  >
+                    <Plus /> Añadir outfit para este día
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {!!manualPlanned.length && (
+            <div className="trip-manual-planned">
+              <p className="eyebrow">MOMENTOS SIN DÍA FIJO</p>
+              <div className="trip-planned-list">
+                {manualPlanned.map((planned) => (
+                  <button
+                    className="trip-planned-row"
+                    key={planned.id}
+                    onClick={() => {
+                      setPlannedEditing(planned);
+                      setSeedDate(undefined);
+                      setPlannedOpen(true);
+                    }}
+                  >
+                    <div className="trip-planned-thumbs">
+                      {planned.clothingItemIds.slice(0, 3).map((itemId) => {
+                        const item = d.items.find((entry) => entry.id === itemId);
+                        return item ? <ItemThumb key={itemId} item={item} /> : null;
+                      })}
+                    </div>
+                    <span>
+                      <b>{planned.eventLabel || "Sin fecha concreta"}</b>
+                      <small>{planned.notes || `${planned.clothingItemIds.length} prendas`}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+      {tripOpen && <TripModal trip={currentTrip} close={() => setTripOpen(false)} />}
+      {packingOpen && (
+        <TripPackingModal
+          tripId={currentTrip.id}
+          data={d}
+          item={packingEditing}
+          close={() => {
+            setPackingOpen(false);
+            setPackingEditing(undefined);
+          }}
+        />
+      )}
+      {plannedOpen && (
+        <TripPlannedOutfitModal
+          trip={currentTrip}
+          data={d}
+          planned={plannedEditing}
+          seedDate={seedDate}
+          close={() => {
+            setPlannedOpen(false);
+            setPlannedEditing(undefined);
+            setSeedDate(undefined);
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -6314,7 +7596,7 @@ function SettingsPage() {
   }
   async function exportData() {
     const data = {
-        version: 4,
+        version: 5,
         exportedAt: now(),
         clothingItems: d.items,
         wearLogs: d.wears,
@@ -6329,6 +7611,9 @@ function SettingsPage() {
         weatherLocations: d.weatherLocations,
         userRoutines: d.userRoutines,
         wardrobeEvents: d.wardrobeEvents,
+        trips: d.trips,
+        tripPackingItems: d.tripPackingItems,
+        tripPlannedOutfits: d.tripPlannedOutfits,
       },
       blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -6364,6 +7649,9 @@ function SettingsPage() {
         await db.weatherLocations.bulkAdd(x.weatherLocations || []);
         await db.userRoutines.bulkAdd(x.userRoutines || []);
         await db.wardrobeEvents.bulkAdd(x.wardrobeEvents || []);
+        await db.trips.bulkAdd(x.trips || []);
+        await db.tripPackingItems.bulkAdd(x.tripPackingItems || []);
+        await db.tripPlannedOutfits.bulkAdd(x.tripPlannedOutfits || []);
         await db.settings.put({ ...defaults, ...x.settings, id: "main" });
         await db.syncState.put(syncDefaults);
       });

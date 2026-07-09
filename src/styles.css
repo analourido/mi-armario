@@ -177,3 +177,66 @@ html,body{overflow-x:hidden}
   .context-actions button{flex:1 1 calc(50% - 6px)}
   .routine-row{align-items:flex-start;flex-direction:column}
 }
+
+.trip-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.trip-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px;border:1px solid var(--border-soft);border-radius:18px;background:#fff}
+.trip-card-copy{display:grid;gap:4px;min-width:0}
+.trip-card-copy h3{margin:2px 0;font-size:18px;letter-spacing:-.03em}
+.trip-card-copy>p:not(.eyebrow){margin:0;color:#404040;font-size:11px}
+.trip-card-copy small{color:var(--muted);font-size:9px}
+.trip-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.trip-meta span{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:8px}
+.trip-hero{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:14px;align-items:start}
+.trip-hero h2{margin:4px 0 0;font-size:34px;letter-spacing:-.05em}
+.trip-hero-side{display:grid;gap:10px}
+.trip-guidance{display:grid;gap:10px}
+.trip-guidance p{margin:0;color:#404040;font-size:11px;line-height:1.6}
+.forecast-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.forecast-pill{display:grid;gap:4px;padding:12px;border:1px solid var(--border-soft);border-radius:14px;background:var(--surface-2)}
+.forecast-pill b{font-size:11px}
+.forecast-pill span,.forecast-pill small{color:var(--muted);font-size:9px}
+.trip-check-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.trip-check-grid>div{padding:12px;border:1px solid var(--border-soft);border-radius:14px;background:var(--surface-2)}
+.trip-check-grid b{display:block;font-size:22px;letter-spacing:-.04em}
+.trip-check-grid small{display:block;margin-top:4px;color:var(--muted);font-size:9px}
+.packing-list{display:grid;gap:8px}
+.packing-row{display:grid;grid-template-columns:28px minmax(0,1fr) 52px 28px;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:14px;background:#fff}
+.packing-row.checked{background:#fcfcfb}
+.check-toggle{display:grid;place-items:center;width:28px;height:28px;border:1px solid var(--border);border-radius:50%;background:#fff;color:#111}
+.packing-main{min-width:0}
+.packing-main b,.packing-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.packing-main b{font-size:11px}
+.packing-main small{margin-top:3px;color:var(--muted);font-size:9px}
+.packing-thumb{overflow:hidden;width:52px;height:60px;border-radius:10px;background:var(--surface-2)}
+.packing-thumb img,.packing-thumb.placeholder{width:100%;height:100%;object-fit:contain}
+.trip-day-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.trip-day-card{display:grid;gap:10px;padding:12px;border:1px solid var(--border-soft);border-radius:16px;background:#fff}
+.trip-day-card header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.trip-day-card header b,.trip-day-card header small,.trip-day-card header span{display:block}
+.trip-day-card header b{font-size:12px}
+.trip-day-card header small,.trip-day-card header span{color:var(--muted);font-size:8px}
+.trip-planned-list{display:grid;gap:8px}
+.trip-planned-row{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:center;gap:10px;border:1px solid var(--border-soft);border-radius:14px;background:#fff;padding:8px;text-align:left}
+.trip-planned-row span{min-width:0}
+.trip-planned-row b,.trip-planned-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trip-planned-row b{font-size:10px}
+.trip-planned-row small{margin-top:4px;color:var(--muted);font-size:8px}
+.trip-planned-thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.trip-planned-thumbs img,.trip-planned-thumbs .placeholder{width:100%;height:54px;border-radius:8px;background:var(--surface-2);object-fit:contain}
+.trip-manual-planned{margin-top:16px}
+
+@media(max-width:1200px){
+  .trip-grid{grid-template-columns:1fr}
+  .trip-day-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:760px){
+  .trip-hero{grid-template-columns:1fr}
+  .trip-hero h2{font-size:30px}
+  .trip-check-grid{grid-template-columns:1fr 1fr}
+  .packing-row{grid-template-columns:28px minmax(0,1fr) 44px 28px}
+  .packing-thumb{width:44px;height:52px}
+  .trip-day-grid{grid-template-columns:1fr}
+  .trip-planned-row{grid-template-columns:96px minmax(0,1fr)}
+  .trip-planned-thumbs img,.trip-planned-thumbs .placeholder{height:46px}
+}
