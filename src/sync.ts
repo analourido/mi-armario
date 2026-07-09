@@ -60,6 +60,8 @@ function tableFor(name: SyncableCollection) {
       return db.wishlistItems as unknown as Table<Record<string, unknown>, string>;
     case "spaces":
       return db.spaces as unknown as Table<Record<string, unknown>, string>;
+    case "resaleListings":
+      return db.resaleListings as unknown as Table<Record<string, unknown>, string>;
   }
 }
 

@@ -30,6 +30,7 @@ import {
   Archive,
   BarChart3,
   CalendarDays,
+  Camera,
   Check,
   ChevronLeft,
   CircleDollarSign,
@@ -54,6 +55,7 @@ import {
   Shuffle,
   ShoppingBag,
   Sparkles,
+  Store,
   Trash2,
   Undo2,
   Upload,
@@ -92,6 +94,7 @@ import type {
   Outfit,
   PhysicalStatus,
   PurchaseOrder,
+  ResaleListing,
   SaleRecord,
   Settings,
   Space,
@@ -135,6 +138,24 @@ const statusClass: Record<DecisionStatus, string> = {
   maybe: "maybe",
   repair: "repair",
 };
+const resaleStatuses = {
+  to_photo: "Pendiente de fotos",
+  photos_done: "Fotos hechas",
+  draft: "En borrador",
+  listed: "Subida",
+  reserved: "Reservada",
+  sold: "Vendida",
+  withdrawn: "Retirada",
+  donated_instead: "Donada al final",
+} as const;
+const resalePipeline = [
+  "to_photo",
+  "photos_done",
+  "draft",
+  "listed",
+  "reserved",
+  "sold",
+] as const;
 const spaceTypes: Record<SpaceType, string> = {
   home: "Casa o base",
   room: "Habitación",
@@ -147,6 +168,59 @@ const spaceTypeRank: Record<SpaceType, number> = {
   storage: 2,
   zone: 3,
 };
+function daysSince(date?: string) {
+  if (!date) return 0;
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(date).getTime()) / 86400000),
+  );
+}
+function resaleAge(listing: ResaleListing) {
+  return daysSince(listing.listedAt || listing.createdAt);
+}
+function suggestedDrop(listing: ResaleListing) {
+  if (!listing.askingPrice) return;
+  const ratio = resaleAge(listing) >= 60 ? 0.2 : 0.1;
+  const next = Math.round(listing.askingPrice * (1 - ratio));
+  return listing.minimumPrice
+    ? Math.max(next, listing.minimumPrice)
+    : next;
+}
+function buildListingCopy(item: ClothingItem, listing?: ResaleListing) {
+  const attrs = [
+    item.brand,
+    item.category,
+    item.size ? `talla ${item.size}` : "",
+    item.colors?.[0] ? `color ${item.colors[0].toLowerCase()}` : "",
+    item.notes || "",
+  ].filter(Boolean);
+  const title = [
+    item.brand,
+    item.name,
+    item.size ? `T${item.size}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+    .slice(0, 70);
+  const priceBase = listing?.askingPrice || item.estimatedValue || item.originalPrice;
+  const description = [
+    `${item.name}${item.brand ? ` de ${item.brand}` : ""}.`,
+    item.category ? `Categoría: ${item.category}.` : "",
+    item.size ? `Talla: ${item.size}.` : "",
+    item.colors?.length ? `Color: ${item.colors.join(", ")}.` : "",
+    `Estado: ${physical[item.physicalStatus]}.`,
+    item.notes ? `Detalle: ${item.notes}.` : "",
+    "Es una prenda cuidada y lista para una nueva vida.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    title: listing?.title || title,
+    description: listing?.description || description,
+    suggestedPrice: priceBase ? Math.round(priceBase) : undefined,
+    summary: attrs.join(" · "),
+  };
+}
 
 async function compressImage(file?: File) {
   if (!file) return;
@@ -234,7 +308,8 @@ async function softDeleteRecords(
     | "purchaseOrders"
     | "closetExits"
     | "wishlistItems"
-    | "spaces",
+    | "spaces"
+    | "resaleListings",
   ids: string[],
 ) {
   await withoutSyncTracking(async () => {
@@ -261,6 +336,9 @@ async function softDeleteRecords(
           break;
         case "spaces":
           await db.spaces.delete(id);
+          break;
+        case "resaleListings":
+          await db.resaleListings.delete(id);
           break;
       }
     }
@@ -299,6 +377,7 @@ function useData() {
         exits: await db.closetExits.toArray(),
         wishlist: await db.wishlistItems.toArray(),
         spaces: await db.spaces.toArray(),
+        resaleListings: await db.resaleListings.toArray(),
         syncState: (await db.syncState.get("main")) || syncDefaults,
         settings: (await db.settings.get("main")) || defaults,
       }),
@@ -312,6 +391,7 @@ function useData() {
       exits: [],
       wishlist: [],
       spaces: [],
+      resaleListings: [],
       syncState: syncDefaults,
       settings: defaults,
     }
@@ -439,6 +519,7 @@ function App() {
           <Route path="/pedidos" element={<OrderItems />} />
           <Route path="/espacios" element={<SpacesPage />} />
           <Route path="/espacios/:id" element={<SpaceDetail />} />
+          <Route path="/plan-venta" element={<ResalePlan />} />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="/salidas" element={<ExitManager />} />
           <Route path="/decisiones" element={<Decisions />} />
@@ -458,6 +539,7 @@ const nav = [
   ["/outfits", Heart, "Outfits"],
   ["/usos", CalendarDays, "Usos"],
   ["/pedidos", PackagePlus, "Pedidos"],
+  ["/plan-venta", Store, "Plan de venta"],
   ["/decisiones", Archive, "Decidir"],
   ["/balance", WalletCards, "Balance"],
   ["/estadisticas", BarChart3, "Estadísticas"],
@@ -534,6 +616,21 @@ function Dashboard() {
   const wearCount = (id: string) =>
     d.wears.filter((w) => w.clothingItemIds.includes(id)).length;
   const activeItems = d.items.filter((i) => !i.isArchived);
+  const resalePlan = d.resaleListings,
+    pendingPhotos = resalePlan.filter((x) => x.status === "to_photo").length,
+    readyDrafts = resalePlan.filter(
+      (x) => x.status === "photos_done" || x.status === "draft",
+    ).length,
+    staleListings = resalePlan.filter(
+      (x) => x.status === "listed" && resaleAge(x) >= 30,
+    ),
+    topResaleTip = staleListings.length
+      ? "Tienes prendas subidas hace tiempo: toca revisar precio o fotos."
+      : pendingPhotos
+        ? "Empieza por fotografiar lo que ya decidiste vender."
+        : readyDrafts
+          ? "Tienes borradores casi listos para subir progresivamente."
+          : "Tu plan de venta está al día.";
   const locatedCount = activeItems.filter((item) => item.spaceId).length,
     unlocatedCount = activeItems.length - locatedCount,
     locationRate = activeItems.length
@@ -640,6 +737,13 @@ function Dashboard() {
             <small>Venta, donación u otra salida</small>
           </span>
         </NavLink>
+        <NavLink to="/plan-venta">
+          <Store />
+          <span>
+            <b>Plan de venta</b>
+            <small>Organiza Vinted y tus ventas por fases</small>
+          </span>
+        </NavLink>
         <NavLink to="/wishlist">
           <Heart />
           <span>
@@ -670,6 +774,25 @@ function Dashboard() {
                 ? mainSpaces.map((space) => space.name).join(" · ")
                 : "Empieza creando tu primera casa o armario"}
             </small>
+          </div>
+        </div>
+      </section>
+      <section className="panel location-summary">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">PLAN DE VENTA</p>
+            <h2>Vinted inteligente, sin salir de tu armario</h2>
+          </div>
+          <NavLink to="/plan-venta">Abrir plan</NavLink>
+        </div>
+        <div className="location-summary-grid">
+          <div>
+            <b>{pendingPhotos} pendientes de foto</b>
+            <small>{readyDrafts} borradores listos o casi listos</small>
+          </div>
+          <div>
+            <b>{staleListings.length} subidas hace mucho</b>
+            <small>{topResaleTip}</small>
           </div>
         </div>
       </section>
@@ -1325,12 +1448,14 @@ function ItemDetail() {
   }
   async function remove() {
     if (confirm("¿Eliminar esta prenda y sus referencias?")) {
-      await db.transaction("rw", [db.clothingItems, db.wearLogs], async () => {
+      await db.transaction("rw", [db.clothingItems, db.wearLogs, db.resaleListings], async () => {
         await softDeleteRecords("clothingItems", [item!.id]);
         await softDeleteRecords(
           "wearLogs",
           logs.map((log) => log.id),
         );
+        if (item?.resaleListingId)
+          await softDeleteRecords("resaleListings", [item.resaleListingId]);
       });
       n("/armario");
     }
@@ -2487,6 +2612,11 @@ function Balance() {
       (a, s) => a + (s.netProfit ?? s.salePrice - (s.fees || 0)),
       0,
     ),
+    soldListings = d.resaleListings.filter((x) => x.status === "sold"),
+    avgSoldPrice = soldListings.length
+      ? soldListings.reduce((sum, listing) => sum + (listing.soldPrice || 0), 0) /
+        soldListings.length
+      : 0,
     m = currentMonth(),
     mi = d.orders
       .filter((o) => month(o.date) === m)
@@ -2506,6 +2636,7 @@ function Balance() {
       </PageHead>
       <div className="utility-links">
         <NavLink to="/salidas"><Archive /> Otras salidas</NavLink>
+        <NavLink to="/plan-venta"><Store /> Plan de venta</NavLink>
         <NavLink to="/wishlist"><Heart /> Wishlist ({d.wishlist.filter((w) => w.status === "pending").length})</NavLink>
         <NavLink to="/pedidos"><PackagePlus /> Prendas desde pedidos</NavLink>
       </div>
@@ -2535,7 +2666,7 @@ function Balance() {
             <Stat label="Gasto total" value={money(spend)} />
             <Stat label="Ganado en ventas" value={money(income)} />
             <Stat label="Balance neto" value={money(income - spend)} />
-            <Stat label="Pedidos" value={d.orders.length} />
+            <Stat label="Precio medio venta" value={soldListings.length ? money(avgSoldPrice) : "—"} />
           </div>
           <section className="one-in">
             <div>
@@ -2854,9 +2985,10 @@ function SaleModal({
         createdAt: sale?.createdAt || t,
         updatedAt: t,
       };
-    await db.transaction("rw", [db.saleRecords, db.clothingItems, db.closetExits], async () => {
+    await db.transaction("rw", [db.saleRecords, db.clothingItems, db.closetExits, db.resaleListings], async () => {
       await db.saleRecords.put(obj);
       const existingExit = await db.closetExits.where("clothingItemId").equals(form.clothingItemId).filter((x) => x.type === "sold").first();
+      const listing = await db.resaleListings.where("clothingItemId").equals(form.clothingItemId).first();
       await db.closetExits.put({
         id: existingExit?.id || uid(),
         clothingItemId: form.clothingItemId,
@@ -2878,6 +3010,16 @@ function SaleModal({
         archiveReason: "sold",
         updatedAt: t,
       });
+      if (listing)
+        await db.resaleListings.update(listing.id, {
+          status: "sold",
+          soldPrice: obj.salePrice,
+          fees: obj.fees,
+          netProfit: obj.netProfit,
+          soldAt: form.date,
+          lastUpdatedAt: t,
+          updatedAt: t,
+        });
     });
     close();
   }
@@ -3031,6 +3173,640 @@ function MonthlyChart({
   );
 }
 
+function ResalePlan() {
+  const d = useData(),
+    [tab, setTab] = useState<(typeof resalePipeline)[number]>("to_photo"),
+    [editing, setEditing] = useState<ResaleListing | ClothingItem | false>(false),
+    [copyOpen, setCopyOpen] = useState<ResaleListing | null>(null),
+    [soldOpen, setSoldOpen] = useState<ResaleListing | null>(null);
+  const candidates = d.items.filter(
+    (item) => item.decisionStatus === "sell" && !item.isArchived,
+  );
+  const listings = d.resaleListings
+    .map((listing) => ({
+      listing,
+      item: d.items.find((item) => item.id === listing.clothingItemId),
+    }))
+    .filter((entry) => entry.item);
+  const byStatus = (status: ResaleListing["status"]) =>
+    listings.filter((entry) => entry.listing.status === status);
+  const soldListings = d.resaleListings.filter((x) => x.status === "sold");
+  const listedOld = d.resaleListings.filter(
+    (x) => x.status === "listed" && resaleAge(x) >= 30,
+  );
+  const avgIncome = soldListings.length
+    ? soldListings.reduce((sum, listing) => sum + (listing.netProfit || 0), 0) /
+      soldListings.length
+    : 0;
+  const toSellWithoutListing = candidates.filter((item) => !item.resaleListingId);
+  const avgDaysToSell = soldListings.length
+    ? Math.round(
+        soldListings.reduce(
+          (sum, listing) =>
+            sum +
+            Math.max(
+              0,
+              Math.round(
+                (new Date(listing.soldAt || listing.updatedAt).getTime() -
+                  new Date(listing.listedAt || listing.createdAt).getTime()) /
+                  86400000,
+              ),
+            ),
+          0,
+        ) / soldListings.length,
+      )
+    : 0;
+  const lastSaleGap = d.sales.length
+    ? daysSince(
+        [...d.sales].sort((a, b) => b.date.localeCompare(a.date))[0]?.date,
+      )
+    : 999;
+  const recommendations = [
+    listedOld.length
+      ? `${listedOld.length} prendas llevan más de 30 días subidas: revisa fotos o precio.`
+      : "",
+    d.resaleListings.some((x) => x.status === "listed" && resaleAge(x) >= 60)
+      ? "Hay anuncios con más de 60 días: baja 10-20% o resube."
+      : "",
+    d.resaleListings.some((x) => x.status === "listed" && resaleAge(x) >= 90)
+      ? "Más de 90 días sin salir: retira, dona o cambia estrategia."
+      : "",
+    toSellWithoutListing.length
+      ? `Fotografía primero ${toSellWithoutListing
+          .slice(0, 2)
+          .map((item) => item.name)
+          .join(" y ")}.`
+      : "",
+    byStatus("draft").length
+      ? `Tienes ${byStatus("draft").length} borradores listos para subir poco a poco.`
+      : "",
+    lastSaleGap >= 60
+      ? "Hace bastante que no vendes: prueba a renovar anuncios o bajar precios."
+      : lastSaleGap >= 30
+        ? "Llevas más de 30 días sin vender: conviene mover el pipeline."
+        : "",
+  ].filter(Boolean);
+
+  async function createOrEditListing(input: ResaleListing | ClothingItem) {
+    setEditing(input);
+  }
+
+  async function updateListing(id: string, changes: Partial<ResaleListing>) {
+    await db.resaleListings.update(id, {
+      ...changes,
+      lastUpdatedAt: now(),
+      updatedAt: now(),
+    });
+  }
+
+  async function quickStatus(
+    listing: ResaleListing,
+    status: ResaleListing["status"],
+    extra: Partial<ResaleListing> = {},
+  ) {
+    const stamp = now();
+    const item = d.items.find((entry) => entry.id === listing.clothingItemId);
+    await db.transaction("rw", [db.resaleListings, db.clothingItems, db.closetExits], async () => {
+      await updateListing(listing.id, {
+        status,
+        photosTaken: status !== "to_photo",
+        descriptionReady:
+          status === "draft" || status === "listed" || status === "reserved" || status === "sold"
+            ? true
+            : listing.descriptionReady,
+        listedAt:
+          status === "listed" && !listing.listedAt ? today() : listing.listedAt,
+        reservedAt: status === "reserved" ? today() : extra.reservedAt,
+        soldAt: status === "sold" ? today() : extra.soldAt,
+        withdrawnAt:
+          status === "withdrawn" || status === "donated_instead" ? today() : extra.withdrawnAt,
+        lastUpdatedAt: stamp,
+        ...extra,
+      });
+      if (item && status === "listed") {
+        await db.clothingItems.update(item.id, {
+          vintedStatus: listing.platform === "vinted" ? "listed" : item.vintedStatus,
+          updatedAt: stamp,
+        });
+      }
+      if (item && status === "withdrawn") {
+        await db.clothingItems.update(item.id, {
+          vintedStatus: item.vintedStatus === "listed" ? "not_listed" : item.vintedStatus,
+          updatedAt: stamp,
+        });
+      }
+      if (item && status === "donated_instead") {
+        await db.closetExits.put({
+          id: uid(),
+          clothingItemId: item.id,
+          date: today(),
+          type: "donated",
+          notes: "Donada desde el plan de venta",
+          createdAt: stamp,
+          updatedAt: stamp,
+        });
+        await db.clothingItems.update(item.id, {
+          isArchived: true,
+          archivedAt: today(),
+          archiveReason: "donated",
+          updatedAt: stamp,
+        });
+      }
+    });
+  }
+
+  return (
+    <>
+      <PageHead
+        eyebrow={`${d.resaleListings.length} LISTINGS · ${candidates.length} PRENDAS PARA VENDER`}
+        title="Plan de venta"
+      >
+        <Button onClick={() => toSellWithoutListing[0] && createOrEditListing(toSellWithoutListing[0])}>
+          <Plus /> Nuevo listing
+        </Button>
+      </PageHead>
+      <div className="stat-grid">
+        <Stat label="Para vender" value={candidates.length} icon={<Store />} />
+        <Stat label="Pendientes de foto" value={byStatus("to_photo").length} icon={<Camera />} />
+        <Stat label="Subidas" value={byStatus("listed").length} icon={<Upload />} />
+        <Stat label="Ingresos totales" value={money(soldListings.reduce((sum, x) => sum + (x.netProfit || 0), 0))} icon={<CircleDollarSign />} />
+      </div>
+      <div className="two-col">
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">RESUMEN</p>
+              <h2>Estado actual de tus ventas</h2>
+            </div>
+          </div>
+          <div className="space-list">
+            <div className="space-list-row"><div><b>Borradores</b><small>Listos para preparar anuncio</small></div><span>{byStatus("draft").length}</span></div>
+            <div className="space-list-row"><div><b>Reservadas</b><small>En espera de cierre</small></div><span>{byStatus("reserved").length}</span></div>
+            <div className="space-list-row"><div><b>Vendidas</b><small>Precio medio {soldListings.length ? money(soldListings.reduce((sum, x) => sum + (x.soldPrice || 0), 0) / soldListings.length) : "—"}</small></div><span>{soldListings.length}</span></div>
+            <div className="space-list-row"><div><b>Subidas hace mucho</b><small>Más de 30 días activas</small></div><span>{listedOld.length}</span></div>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">RECOMENDACIONES</p>
+              <h2>Qué haría ahora</h2>
+            </div>
+          </div>
+          {recommendations.length ? (
+            <div className="space-list">
+              {recommendations.map((text) => (
+                <div className="space-list-row" key={text}>
+                  <div>
+                    <b>Consejo útil</b>
+                    <small>{text}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty
+              title="Todo fluye bien"
+              text="Cuando tengas listings activos durante más tiempo o ventas nuevas, verás aquí sugerencias concretas."
+            />
+          )}
+        </section>
+      </div>
+      {!!toSellWithoutListing.length && (
+        <section className="panel sell-prep">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">SIN LISTING TODAVÍA</p>
+              <h2>Prendas listas para entrar en el plan</h2>
+            </div>
+          </div>
+          <div className="sell-row">
+            {toSellWithoutListing.map((item) => (
+              <button onClick={() => createOrEditListing(item)} key={item.id}>
+                <ItemThumb item={item} />
+                <span>
+                  {item.name}
+                  <small>Crear listing de venta</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      <div className="tabs resale-tabs">
+        {resalePipeline.map((status) => (
+          <button
+            className={tab === status ? "active" : ""}
+            onClick={() => setTab(status)}
+            key={status}
+          >
+            {resaleStatuses[status]} <b>{byStatus(status).length}</b>
+          </button>
+        ))}
+      </div>
+      <div className="resale-board">
+        {resalePipeline.map((status) => (
+          <section
+            className={`panel resale-column ${tab === status ? "active" : ""}`}
+            key={status}
+          >
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">{resaleStatuses[status].toUpperCase()}</p>
+                <h2>{byStatus(status).length}</h2>
+              </div>
+            </div>
+            <div className="resale-cards">
+              {byStatus(status).length ? (
+                byStatus(status).map(({ listing, item }) => (
+                  <article className="resale-card" key={listing.id}>
+                    <div className="resale-card-top">
+                      <ItemThumb item={item!} />
+                      <div>
+                        <h3>{item!.name}</h3>
+                        <p>{listing.platform} · {resaleStatuses[listing.status]}</p>
+                        <small>
+                          {listing.status === "listed"
+                            ? `${resaleAge(listing)} días subida`
+                            : listing.status === "sold"
+                              ? `Vendida por ${money(listing.soldPrice || 0)}`
+                              : listing.askingPrice
+                                ? `Precio actual ${money(listing.askingPrice)}`
+                                : "Sin precio todavía"}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="card-tags">
+                      <span>{listing.photosTaken ? "Fotos ✓" : "Fotos pendientes"}</span>
+                      <span>{listing.descriptionReady ? "Texto ✓" : "Texto pendiente"}</span>
+                    </div>
+                    <div className="resale-actions">
+                      {listing.status === "to_photo" && (
+                        <button onClick={() => quickStatus(listing, "photos_done", { photosTaken: true })}>
+                          Fotos hechas
+                        </button>
+                      )}
+                      {listing.status === "photos_done" && (
+                        <button onClick={() => quickStatus(listing, "draft", { descriptionReady: true })}>
+                          Crear borrador
+                        </button>
+                      )}
+                      {(listing.status === "draft" || listing.status === "photos_done") && (
+                        <button
+                          onClick={() =>
+                            quickStatus(listing, "listed", {
+                              descriptionReady: true,
+                              listedAt: listing.listedAt || today(),
+                            })
+                          }
+                        >
+                          Marcar subida
+                        </button>
+                      )}
+                      {listing.status === "listed" && (
+                        <>
+                          <button onClick={() => quickStatus(listing, "reserved")}>Reservada</button>
+                          <button
+                            onClick={() => {
+                              const next = suggestedDrop(listing);
+                              if (next && next !== listing.askingPrice)
+                                void updateListing(listing.id, { askingPrice: next });
+                            }}
+                          >
+                            Bajar precio
+                          </button>
+                        </>
+                      )}
+                      {listing.status === "reserved" && (
+                        <button onClick={() => setSoldOpen(listing)}>Marcar vendida</button>
+                      )}
+                      {listing.status !== "sold" && listing.status !== "donated_instead" && (
+                        <button onClick={() => quickStatus(listing, "withdrawn")}>Retirar</button>
+                      )}
+                      {listing.status !== "sold" && (
+                        <button onClick={() => quickStatus(listing, "donated_instead")}>Donar al final</button>
+                      )}
+                      <button onClick={() => setCopyOpen(listing)}>Preparar anuncio</button>
+                      <button onClick={() => setEditing(listing)}>Editar</button>
+                    </div>
+                    <div className="resale-actions secondary">
+                      <button onClick={() => window.location.hash = `#/prenda/${item!.id}`}>Abrir prenda</button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <Empty
+                  title="Nada por aquí"
+                  text="Cuando una prenda entre en esta fase aparecerá en esta columna."
+                />
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+      {editing && (
+        <ResaleListingModal
+          data={d}
+          source={editing}
+          close={() => setEditing(false)}
+        />
+      )}
+      {copyOpen && (
+        <ResaleCopyModal
+          item={d.items.find((x) => x.id === copyOpen.clothingItemId)!}
+          listing={copyOpen}
+          close={() => setCopyOpen(null)}
+        />
+      )}
+      {soldOpen && (
+        <ResaleSoldModal
+          listing={soldOpen}
+          item={d.items.find((x) => x.id === soldOpen.clothingItemId)!}
+          close={() => setSoldOpen(null)}
+        />
+      )}
+      <section className="panel">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">MÉTRICAS RÁPIDAS</p>
+            <h2>Qué está funcionando</h2>
+          </div>
+        </div>
+        <div className="stat-grid">
+          <Stat label="Ingreso medio" value={soldListings.length ? money(avgIncome) : "—"} />
+          <Stat label="Tiempo medio hasta venta" value={soldListings.length ? `${avgDaysToSell} días` : "—"} />
+          <Stat label="Retiradas" value={d.resaleListings.filter((x) => x.status === "withdrawn").length} />
+          <Stat label="Donadas al final" value={d.resaleListings.filter((x) => x.status === "donated_instead").length} />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function ResaleListingModal({
+  data,
+  source,
+  close,
+}: {
+  data: Data;
+  source: ResaleListing | ClothingItem;
+  close: () => void;
+}) {
+  const existing =
+    "clothingItemId" in source
+      ? source
+      : data.resaleListings.find((x) => x.clothingItemId === source.id);
+  const item =
+    "clothingItemId" in source
+      ? data.items.find((x) => x.id === source.clothingItemId)!
+      : source;
+  const generated = buildListingCopy(item, existing);
+  const [form, setForm] = useState({
+    platform: existing?.platform || "vinted",
+    status: existing?.status || ("to_photo" as ResaleListing["status"]),
+    askingPrice: existing?.askingPrice?.toString() || generated.suggestedPrice?.toString() || "",
+    minimumPrice: existing?.minimumPrice?.toString() || "",
+    title: existing?.title || generated.title,
+    description: existing?.description || generated.description,
+    notes: existing?.notes || "",
+    photosTaken: existing?.photosTaken || false,
+    descriptionReady: existing?.descriptionReady || false,
+  });
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const t = now();
+    const id = existing?.id || uid();
+    await db.transaction("rw", [db.resaleListings, db.clothingItems], async () => {
+      await db.resaleListings.put({
+        id,
+        clothingItemId: item.id,
+        platform: form.platform as ResaleListing["platform"],
+        status: form.status,
+        askingPrice: form.askingPrice ? +form.askingPrice : undefined,
+        minimumPrice: form.minimumPrice ? +form.minimumPrice : undefined,
+        photosTaken: form.photosTaken,
+        descriptionReady: form.descriptionReady,
+        listedAt:
+          form.status === "listed"
+            ? existing?.listedAt || today()
+            : existing?.listedAt,
+        title: form.title || undefined,
+        description: form.description || undefined,
+        notes: form.notes || undefined,
+        createdAt: existing?.createdAt || t,
+        updatedAt: t,
+        lastUpdatedAt: t,
+      });
+      await db.clothingItems.update(item.id, {
+        resaleListingId: id,
+        decisionStatus: "sell",
+        vintedStatus:
+          form.platform === "vinted" && form.status === "listed" ? "listed" : item.vintedStatus,
+        updatedAt: t,
+      });
+    });
+    close();
+  }
+  return (
+    <Modal title={existing ? "Editar listing" : "Nuevo listing"} onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          Plataforma
+          <select value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value as ResaleListing["platform"] })}>
+            <option value="vinted">Vinted</option>
+            <option value="wallapop">Wallapop</option>
+            <option value="other">Otra</option>
+          </select>
+        </label>
+        <label>
+          Estado
+          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as ResaleListing["status"] })}>
+            {Object.entries(resaleStatuses).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Precio actual
+          <input type="number" min="0" step=".01" value={form.askingPrice} onChange={(e) => setForm({ ...form, askingPrice: e.target.value })} />
+        </label>
+        <label>
+          Precio mínimo
+          <input type="number" min="0" step=".01" value={form.minimumPrice} onChange={(e) => setForm({ ...form, minimumPrice: e.target.value })} />
+        </label>
+        <label className="full">
+          Título
+          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value, descriptionReady: true })} />
+        </label>
+        <label className="full">
+          Descripción
+          <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value, descriptionReady: true })} />
+        </label>
+        <label className="toggle">
+          <input type="checkbox" checked={form.photosTaken} onChange={(e) => setForm({ ...form, photosTaken: e.target.checked })} />
+          <span />
+          Fotos hechas
+        </label>
+        <label className="toggle">
+          <input type="checkbox" checked={form.descriptionReady} onChange={(e) => setForm({ ...form, descriptionReady: e.target.checked })} />
+          <span />
+          Descripción lista
+        </label>
+        <label className="full">
+          Notas
+          <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+        </label>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={close}>Cancelar</Button>
+          <Button>Guardar listing</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ResaleCopyModal({
+  item,
+  listing,
+  close,
+}: {
+  item: ClothingItem;
+  listing: ResaleListing;
+  close: () => void;
+}) {
+  const copy = buildListingCopy(item, listing);
+  const all = `${copy.title}\n\n${copy.description}\n\nPrecio sugerido: ${copy.suggestedPrice ? money(copy.suggestedPrice) : "—"}`;
+  async function copyText(text: string) {
+    await navigator.clipboard.writeText(text);
+    alert("Texto copiado.");
+  }
+  return (
+    <Modal title="Preparar anuncio Vinted" onClose={close} wide>
+      <div className="vinted-copy">
+        <label>
+          Título
+          <div><p>{copy.title}</p></div>
+        </label>
+        <label>
+          Descripción
+          <div><p>{copy.description}</p></div>
+        </label>
+        <label>
+          Precio sugerido
+          <div><p>{copy.suggestedPrice ? money(copy.suggestedPrice) : "Sin sugerencia todavía"}</p></div>
+        </label>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={() => copyText(copy.title)}>Copiar título</Button>
+          <Button type="button" variant="secondary" onClick={() => copyText(copy.description)}>Copiar descripción</Button>
+          <Button type="button" onClick={() => copyText(all)}>Copiar todo</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ResaleSoldModal({
+  listing,
+  item,
+  close,
+}: {
+  listing: ResaleListing;
+  item: ClothingItem;
+  close: () => void;
+}) {
+  const [form, setForm] = useState({
+    soldPrice: listing.soldPrice?.toString() || listing.askingPrice?.toString() || "",
+    fees: listing.fees?.toString() || "",
+    date: listing.soldAt || today(),
+  });
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const t = now();
+    const soldPrice = +form.soldPrice || 0;
+    const fees = +form.fees || 0;
+    const netProfit = soldPrice - fees;
+    await db.transaction("rw", [db.resaleListings, db.saleRecords, db.clothingItems, db.closetExits], async () => {
+      const existingSale = item.saleRecordId
+        ? await db.saleRecords.get(item.saleRecordId)
+        : await db.saleRecords.where("clothingItemId").equals(item.id).first();
+      const existingExit = await db.closetExits
+        .where("clothingItemId")
+        .equals(item.id)
+        .filter((x) => x.type === "sold")
+        .first();
+      const saleId = existingSale?.id || item.saleRecordId || uid();
+      await db.resaleListings.update(listing.id, {
+        status: "sold",
+        soldPrice,
+        fees: fees || undefined,
+        netProfit,
+        soldAt: form.date,
+        lastUpdatedAt: t,
+        updatedAt: t,
+      });
+      await db.saleRecords.put({
+        id: saleId,
+        clothingItemId: item.id,
+        date: form.date,
+        platform: listing.platform,
+        salePrice: soldPrice,
+        fees: fees || undefined,
+        netProfit,
+        notes: listing.notes,
+        createdAt: existingSale?.createdAt || t,
+        updatedAt: t,
+      } as SaleRecord);
+      await db.closetExits.put({
+        id: existingExit?.id || uid(),
+        clothingItemId: item.id,
+        date: form.date,
+        type: "sold",
+        amount: netProfit,
+        platform: listing.platform,
+        notes: listing.notes,
+        createdAt: existingExit?.createdAt || t,
+        updatedAt: t,
+      });
+      await db.clothingItems.update(item.id, {
+        saleRecordId: saleId,
+        soldAt: form.date,
+        vintedStatus: listing.platform === "vinted" ? "sold" : item.vintedStatus,
+        isArchived: true,
+        archivedAt: form.date,
+        archiveReason: "sold",
+        updatedAt: t,
+      });
+    });
+    close();
+  }
+  return (
+    <Modal title="Marcar como vendida" onClose={close}>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          Precio vendido
+          <input required type="number" min="0" step=".01" value={form.soldPrice} onChange={(e) => setForm({ ...form, soldPrice: e.target.value })} />
+        </label>
+        <label>
+          Comisiones
+          <input type="number" min="0" step=".01" value={form.fees} onChange={(e) => setForm({ ...form, fees: e.target.value })} />
+        </label>
+        <label className="full">
+          Fecha
+          <input required type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+        </label>
+        <div className="profit full">
+          <span>Ganancia neta</span>
+          <b>{money((+form.soldPrice || 0) - (+form.fees || 0))}</b>
+        </div>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={close}>Cancelar</Button>
+          <Button>Guardar venta</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function Stats() {
   const d = useData();
   const count = (key: "category" | "decisionStatus") =>
@@ -3057,6 +3833,31 @@ function Stats() {
         i.originalPrice &&
         d.wears.some((w) => w.clothingItemIds.includes(i.id)),
     );
+  const soldListings = d.resaleListings.filter((x) => x.status === "sold"),
+    avgSoldPrice = soldListings.length
+      ? soldListings.reduce((sum, listing) => sum + (listing.soldPrice || 0), 0) /
+        soldListings.length
+      : 0,
+    avgTimeToSell = soldListings.length
+      ? Math.round(
+          soldListings.reduce(
+            (sum, listing) =>
+              sum +
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(listing.soldAt || listing.updatedAt).getTime() -
+                    new Date(listing.listedAt || listing.createdAt).getTime()) /
+                    86400000,
+                ),
+              ),
+            0,
+          ) / soldListings.length,
+        )
+      : 0,
+    retiredOrDonated =
+      d.resaleListings.filter((x) => x.status === "withdrawn").length +
+      d.resaleListings.filter((x) => x.status === "donated_instead").length;
   const cpu = priced.length
     ? priced.reduce(
         (a, i) =>
@@ -3094,6 +3895,10 @@ function Stats() {
           label="Coste por uso medio"
           value={cpu ? money(cpu) : "Sin datos"}
         />
+        <Stat label="Ingresos por ventas" value={money(d.sales.reduce((sum, sale) => sum + (sale.netProfit ?? sale.salePrice - (sale.fees || 0)), 0))} />
+        <Stat label="Precio medio venta" value={soldListings.length ? money(avgSoldPrice) : "—"} />
+        <Stat label="Tiempo medio hasta venta" value={soldListings.length ? `${avgTimeToSell} días` : "—"} />
+        <Stat label="Retiradas o donadas" value={retiredOrDonated} />
       </div>
       <div className="two-col charts">
         <ChartBox title="Prendas por categoría">
@@ -3220,6 +4025,7 @@ function SettingsPage() {
         closetExits: d.exits,
         wishlistItems: d.wishlist,
         spaces: d.spaces,
+        resaleListings: d.resaleListings,
       },
       blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -3251,6 +4057,7 @@ function SettingsPage() {
         await db.closetExits.bulkAdd(x.closetExits || []);
         await db.wishlistItems.bulkAdd(x.wishlistItems || []);
         await db.spaces.bulkAdd(x.spaces || []);
+        await db.resaleListings.bulkAdd(x.resaleListings || []);
         await db.settings.put({ ...defaults, ...x.settings, id: "main" });
         await db.syncState.put(syncDefaults);
       });
@@ -3778,6 +4585,9 @@ function ExitManager() {
         </Button>
       </PageHead>
       <div className="utility-links">
+        <NavLink to="/plan-venta">
+          <Store /> Plan de venta
+        </NavLink>
         <NavLink to="/wishlist">
           <Heart /> Wishlist
         </NavLink>
@@ -3890,7 +4700,7 @@ function ExitModal({ data, close }: { data: Data; close: () => void }) {
       };
     await db.transaction(
       "rw",
-      [db.closetExits, db.clothingItems, db.saleRecords],
+      [db.closetExits, db.clothingItems, db.saleRecords, db.resaleListings],
       async () => {
         await db.closetExits.add(exit);
         const changes: Partial<ClothingItem> = {
@@ -3901,6 +4711,7 @@ function ExitModal({ data, close }: { data: Data; close: () => void }) {
         };
         if (form.type === "sold") {
           const saleId = uid();
+          const salePrice = +form.amount || 0;
           await db.saleRecords.add({
             id: saleId,
             clothingItemId: form.clothingItemId,
@@ -3911,8 +4722,8 @@ function ExitModal({ data, close }: { data: Data; close: () => void }) {
                 : form.platform?.toLowerCase() === "wallapop"
                   ? "wallapop"
                   : "other",
-            salePrice: +form.amount || 0,
-            netProfit: +form.amount || 0,
+            salePrice,
+            netProfit: salePrice,
             notes: form.notes,
             createdAt: t,
             updatedAt: t,
@@ -3921,6 +4732,25 @@ function ExitModal({ data, close }: { data: Data; close: () => void }) {
           changes.soldAt = form.date;
           if (form.platform.toLowerCase() === "vinted")
             changes.vintedStatus = "sold";
+          const listing = await db.resaleListings.where("clothingItemId").equals(form.clothingItemId).first();
+          if (listing)
+            await db.resaleListings.update(listing.id, {
+              status: "sold",
+              soldPrice: salePrice,
+              netProfit: salePrice,
+              soldAt: form.date,
+              lastUpdatedAt: t,
+              updatedAt: t,
+            });
+        } else if (form.type === "donated") {
+          const listing = await db.resaleListings.where("clothingItemId").equals(form.clothingItemId).first();
+          if (listing)
+            await db.resaleListings.update(listing.id, {
+              status: "donated_instead",
+              withdrawnAt: form.date,
+              lastUpdatedAt: t,
+              updatedAt: t,
+            });
         }
         await db.clothingItems.update(form.clothingItemId, changes);
       },

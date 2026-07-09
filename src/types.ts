@@ -14,7 +14,8 @@ export type SyncableCollection =
   | "saleRecords"
   | "closetExits"
   | "wishlistItems"
-  | "spaces";
+  | "spaces"
+  | "resaleListings";
 export interface SyncMeta {
   userId?: string;
   syncStatus?: SyncStatus;
@@ -51,6 +52,7 @@ export interface ClothingItem extends SyncMeta, ImageSyncMeta {
   saleRecordId?: string;
   tags?: string[];
   spaceId?: string;
+  resaleListingId?: string;
   isArchived?: boolean;
   archivedAt?: string;
   archiveReason?: ExitType;
@@ -137,6 +139,37 @@ export interface Space extends SyncMeta, ImageSyncMeta {
   photo?: string;
   notes?: string;
   capacity?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ResaleListing extends SyncMeta {
+  id: string;
+  clothingItemId: string;
+  platform: "vinted" | "wallapop" | "other";
+  status:
+    | "to_photo"
+    | "photos_done"
+    | "draft"
+    | "listed"
+    | "reserved"
+    | "sold"
+    | "withdrawn"
+    | "donated_instead";
+  askingPrice?: number;
+  minimumPrice?: number;
+  soldPrice?: number;
+  fees?: number;
+  netProfit?: number;
+  photosTaken: boolean;
+  descriptionReady: boolean;
+  listedAt?: string;
+  lastUpdatedAt?: string;
+  reservedAt?: string;
+  soldAt?: string;
+  withdrawnAt?: string;
+  title?: string;
+  description?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }

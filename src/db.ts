@@ -9,6 +9,7 @@ import type {
   ClosetExit,
   WishlistItem,
   Space,
+  ResaleListing,
   LocalSyncState,
   SyncDelete,
   SyncableCollection,
@@ -22,6 +23,7 @@ export const db = new Dexie("MiVestidor") as Dexie & {
   closetExits: EntityTable<ClosetExit, "id">;
   wishlistItems: EntityTable<WishlistItem, "id">;
   spaces: EntityTable<Space, "id">;
+  resaleListings: EntityTable<ResaleListing, "id">;
   syncState: EntityTable<LocalSyncState, "id">;
   syncDeletes: EntityTable<SyncDelete, "id">;
   settings: EntityTable<Settings, "id">;
@@ -69,6 +71,22 @@ db.version(4).stores({
   closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
   wishlistItems: "id,status,priority,category,createdAt,updatedAt,userId,syncStatus",
   spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  syncState: "id,syncEnabled,mode,lastSyncedAt",
+  syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
+});
+db.version(5).stores({
+  clothingItems:
+    "id,name,category,decisionStatus,createdAt,updatedAt,purchaseOrderId,saleRecordId,isArchived,spaceId,resaleListingId,userId,syncStatus,lastSyncedAt,*tags",
+  wearLogs: "id,date,updatedAt,userId,syncStatus,*clothingItemIds,outfitId",
+  outfits: "id,name,favorite,updatedAt,userId,syncStatus",
+  settings: "id,updatedAt,userId,syncStatus",
+  purchaseOrders: "id,date,store,updatedAt,userId,syncStatus,*clothingItemIds",
+  saleRecords: "id,date,clothingItemId,platform,updatedAt,userId,syncStatus",
+  closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
+  wishlistItems: "id,status,priority,category,createdAt,updatedAt,userId,syncStatus",
+  spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  resaleListings:
+    "id,clothingItemId,platform,status,listedAt,soldAt,updatedAt,userId,syncStatus",
   syncState: "id,syncEnabled,mode,lastSyncedAt",
   syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
 });
@@ -156,6 +174,7 @@ export const syncCollections = [
   "closetExits",
   "wishlistItems",
   "spaces",
+  "resaleListings",
 ] as const satisfies readonly SyncableCollection[];
 let muteSyncTracking = 0;
 export async function withoutSyncTracking<T>(task: () => Promise<T>) {

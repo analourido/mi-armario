@@ -118,3 +118,27 @@ html,body{overflow-x:hidden}
   .sync-row{align-items:flex-start;flex-direction:column}
   .sync-row span{text-align:left}
 }
+
+.resale-tabs{margin-top:18px}
+.resale-tabs button b{margin-left:4px;font-size:8px}
+.resale-board{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-top:12px}
+.resale-column{min-width:0}
+.resale-cards{display:grid;gap:10px}
+.resale-card{display:grid;gap:10px;padding:12px;border:1px solid var(--border-soft);border-radius:16px;background:#fff}
+.resale-card-top{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center}
+.resale-card-top img,.resale-card-top .placeholder{width:52px;height:60px;border-radius:10px;object-fit:contain}
+.resale-card-top h3{margin:0 0 4px;font-size:12px}
+.resale-card-top p,.resale-card-top small{margin:0;color:var(--muted);font-size:8px}
+.resale-actions{display:flex;flex-wrap:wrap;gap:6px}
+.resale-actions button{border:1px solid var(--border);border-radius:14px;background:#fff;padding:6px 8px;font-size:8px}
+.resale-actions.secondary button{color:var(--muted)}
+
+@media(max-width:1200px){
+  .resale-board{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+@media(max-width:760px){
+  .resale-board{display:block}
+  .resale-column{display:none;margin-top:10px}
+  .resale-column.active{display:block}
+}
