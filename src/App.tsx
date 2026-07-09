@@ -35,14 +35,18 @@ import {
   CircleDollarSign,
   Clipboard,
   ClipboardList,
+  Cloud,
   Download,
   Heart,
   Home,
+  LogIn,
+  LogOut,
   Menu,
   MapPin,
   PackagePlus,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   Settings as SettingsIcon,
@@ -54,14 +58,37 @@ import {
   Undo2,
   Upload,
   WalletCards,
+  Wifi,
+  WifiOff,
   X,
 } from "lucide-react";
-import { db, defaults, today, uid } from "./db";
+import {
+  db,
+  defaults,
+  queueSoftDelete,
+  syncDefaults,
+  today,
+  uid,
+  withoutSyncTracking,
+} from "./db";
+import {
+  lastSyncText,
+  markEverythingPending,
+  setSyncEnabled as saveSyncEnabled,
+  signInWithEmail,
+  signOutFromSync,
+  signUpWithEmail,
+  syncNow,
+  syncStatusText,
+  useSyncController,
+  useSyncSummary,
+} from "./sync";
 import type {
   ClothingItem,
   ClosetExit,
   DecisionStatus,
   ExitType,
+  LocalSyncState,
   Outfit,
   PhysicalStatus,
   PurchaseOrder,
@@ -199,6 +226,47 @@ function occupancyLabel(count: number, capacity?: number) {
   return "Muy lleno";
 }
 
+async function softDeleteRecords(
+  collection:
+    | "clothingItems"
+    | "wearLogs"
+    | "outfits"
+    | "purchaseOrders"
+    | "closetExits"
+    | "wishlistItems"
+    | "spaces",
+  ids: string[],
+) {
+  await withoutSyncTracking(async () => {
+    for (const id of ids) {
+      await queueSoftDelete(collection, id);
+      switch (collection) {
+        case "clothingItems":
+          await db.clothingItems.delete(id);
+          break;
+        case "wearLogs":
+          await db.wearLogs.delete(id);
+          break;
+        case "outfits":
+          await db.outfits.delete(id);
+          break;
+        case "purchaseOrders":
+          await db.purchaseOrders.delete(id);
+          break;
+        case "closetExits":
+          await db.closetExits.delete(id);
+          break;
+        case "wishlistItems":
+          await db.wishlistItems.delete(id);
+          break;
+        case "spaces":
+          await db.spaces.delete(id);
+          break;
+      }
+    }
+  });
+}
+
 async function deleteSpaceBranch(space: Space, data: Data) {
   const branchIds = [...descendantSpaceIds(space.id, data.spaces)],
     affectedItems = data.items.filter(
@@ -215,7 +283,7 @@ async function deleteSpaceBranch(space: Space, data: Data) {
         })),
       );
     }
-    await db.spaces.bulkDelete(branchIds);
+    await softDeleteRecords("spaces", branchIds);
   });
 }
 
@@ -231,6 +299,7 @@ function useData() {
         exits: await db.closetExits.toArray(),
         wishlist: await db.wishlistItems.toArray(),
         spaces: await db.spaces.toArray(),
+        syncState: (await db.syncState.get("main")) || syncDefaults,
         settings: (await db.settings.get("main")) || defaults,
       }),
       [],
@@ -243,6 +312,7 @@ function useData() {
       exits: [],
       wishlist: [],
       spaces: [],
+      syncState: syncDefaults,
       settings: defaults,
     }
   );
@@ -352,6 +422,7 @@ function Stat({
   );
 }
 function App() {
+  useSyncController();
   return (
     <div className="shell">
       <Sidebar />
@@ -393,6 +464,7 @@ const nav = [
   ["/ajustes", SettingsIcon, "Ajustes"],
 ] as const;
 function Sidebar() {
+  const sync = useSyncSummary();
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -411,7 +483,13 @@ function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <p className="local-note">Todo se guarda en este dispositivo.</p>
+      <p className="local-note">
+        {sync.syncEnabled && sync.user
+          ? sync.online
+            ? "Sincronización opcional activa."
+            : "Modo offline. Sincronizará al volver."
+          : "Todo se guarda en este dispositivo."}
+      </p>
     </aside>
   );
 }
@@ -929,7 +1007,10 @@ function ItemForm() {
     );
   async function image(file?: File) {
     const compressed = await compressImage(file);
-    if (compressed) set("image", compressed);
+    if (compressed) {
+      set("image", compressed);
+      set("imageUpdatedAt", now());
+    }
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -1245,8 +1326,11 @@ function ItemDetail() {
   async function remove() {
     if (confirm("¿Eliminar esta prenda y sus referencias?")) {
       await db.transaction("rw", [db.clothingItems, db.wearLogs], async () => {
-        await db.clothingItems.delete(item!.id);
-        await db.wearLogs.where("clothingItemIds").equals(item!.id).delete();
+        await softDeleteRecords("clothingItems", [item!.id]);
+        await softDeleteRecords(
+          "wearLogs",
+          logs.map((log) => log.id),
+        );
       });
       n("/armario");
     }
@@ -1850,6 +1934,7 @@ function SpaceModal({
     type: space?.type || ("storage" as SpaceType),
     parentId: space?.parentId || parentSeed || "",
     photo: space?.photo || "",
+    imageUpdatedAt: space?.imageUpdatedAt || "",
     notes: space?.notes || "",
     capacity: space?.capacity?.toString() || "",
   });
@@ -1862,7 +1947,12 @@ function SpaceModal({
 
   async function updatePhoto(file?: File) {
     const compressed = await compressImage(file);
-    if (compressed) setForm((current) => ({ ...current, photo: compressed }));
+    if (compressed)
+      setForm((current) => ({
+        ...current,
+        photo: compressed,
+        imageUpdatedAt: now(),
+      }));
   }
 
   async function save(e: FormEvent) {
@@ -1882,6 +1972,7 @@ function SpaceModal({
       type: form.type,
       parentId: validParent,
       photo: form.photo || undefined,
+      imageUpdatedAt: form.imageUpdatedAt || undefined,
       notes: form.notes || undefined,
       capacity: form.capacity ? +form.capacity : undefined,
       createdAt: space?.createdAt || t,
@@ -2032,7 +2123,7 @@ function Outfits() {
                     variant="ghost"
                     onClick={() =>
                       confirm("¿Eliminar este outfit?") &&
-                      db.outfits.delete(o.id)
+                      softDeleteRecords("outfits", [o.id])
                     }
                   >
                     <Trash2 />
@@ -2503,7 +2594,7 @@ function Balance() {
                     className="icon-btn"
                     onClick={() =>
                       confirm("¿Eliminar esta compra?") &&
-                      db.purchaseOrders.delete(o.id)
+                      softDeleteRecords("purchaseOrders", [o.id])
                     }
                   >
                     <Trash2 />
@@ -3090,14 +3181,31 @@ function NoData() {
 
 function SettingsPage() {
   const d = useData(),
+    sync = useSyncSummary(),
     file = useRef<HTMLInputElement>(null),
     [budget, setBudget] = useState(
       d.settings.monthlyClothingBudget?.toString() || "",
-    );
+    ),
+    [email, setEmail] = useState(""),
+    [password, setPassword] = useState(""),
+    [authMode, setAuthMode] = useState<"login" | "signup">("login"),
+    [syncBusy, setSyncBusy] = useState(false);
   async function saveBudget() {
     await db.settings.update("main", {
       monthlyClothingBudget: budget ? +budget : undefined,
     });
+  }
+  async function runSyncTask(task: () => Promise<void>) {
+    setSyncBusy(true);
+    try {
+      await task();
+    } catch {
+      alert(
+        "No hemos podido completar esta acción ahora mismo. Revisa tus credenciales o la configuración de Firebase.",
+      );
+    } finally {
+      setSyncBusy(false);
+    }
   }
   async function exportData() {
     const data = {
@@ -3144,6 +3252,7 @@ function SettingsPage() {
         await db.wishlistItems.bulkAdd(x.wishlistItems || []);
         await db.spaces.bulkAdd(x.spaces || []);
         await db.settings.put({ ...defaults, ...x.settings, id: "main" });
+        await db.syncState.put(syncDefaults);
       });
       alert("Backup importado correctamente.");
     } catch {
@@ -3157,6 +3266,7 @@ function SettingsPage() {
       await db.transaction("rw", db.tables, async () => {
         await Promise.all(db.tables.map((t) => t.clear()));
         await db.settings.add(defaults);
+        await db.syncState.add(syncDefaults);
       });
   }
   return (
@@ -3195,7 +3305,7 @@ function SettingsPage() {
         <section className="panel">
           <h2>Tus datos</h2>
           <p className="muted">
-            Todo vive en este dispositivo. Guarda una copia de vez en cuando.
+            Exportar e importar sigue disponible aunque actives sincronización.
           </p>
           <div className="setting-actions">
             <button onClick={exportData}>
@@ -3228,11 +3338,150 @@ function SettingsPage() {
             </button>
           </div>
         </section>
+        <section className="panel">
+          <h2>Sincronización</h2>
+          <p className="muted">{syncStatusText(sync)}</p>
+          <div className="sync-status">
+            <div className="sync-row">
+              <b>Modo actual</b>
+              <span>{sync.syncEnabled && sync.user ? "Sincronizado" : "Local"}</span>
+            </div>
+            <div className="sync-row">
+              <b>Estado de conexión</b>
+              <span>{sync.online ? "Con conexión" : "Sin conexión"}</span>
+            </div>
+            <div className="sync-row">
+              <b>Última sincronización</b>
+              <span>{sync.lastSyncedAt ? lastSyncText(sync.lastSyncedAt) : "Todavía no"}</span>
+            </div>
+            <div className="sync-row">
+              <b>Cambios pendientes</b>
+              <span>{sync.syncEnabled ? sync.pendingChanges : 0}</span>
+            </div>
+          </div>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={sync.syncEnabled}
+              disabled={!sync.hasConfig && !sync.syncEnabled}
+              onChange={(e) =>
+                runSyncTask(() => saveSyncEnabled(e.target.checked))
+              }
+            />
+            <span />
+            Activar sincronización opcional
+          </label>
+          {!sync.hasConfig && (
+            <p className="muted">
+              Falta configurar Firebase en este dispositivo para activar esta función.
+            </p>
+          )}
+          {sync.syncEnabled && !sync.user && sync.hasConfig && (
+            <div className="sync-auth">
+              <div className="small-tabs">
+                <button
+                  className={authMode === "login" ? "active" : ""}
+                  onClick={() => setAuthMode("login")}
+                >
+                  Entrar
+                </button>
+                <button
+                  className={authMode === "signup" ? "active" : ""}
+                  onClick={() => setAuthMode("signup")}
+                >
+                  Crear cuenta
+                </button>
+              </div>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tu@email.com"
+                />
+              </label>
+              <label>
+                Contraseña
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                />
+              </label>
+              <div className="form-actions">
+                <Button
+                  type="button"
+                  disabled={syncBusy || !email || !password}
+                  onClick={() =>
+                    runSyncTask(async () => {
+                      if (authMode === "login") {
+                        await signInWithEmail(email, password);
+                      } else {
+                        await signUpWithEmail(email, password);
+                      }
+                    })
+                  }
+                >
+                  <LogIn /> {authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+                </Button>
+              </div>
+            </div>
+          )}
+          {sync.syncEnabled && sync.user && (
+            <div className="setting-actions sync-actions">
+              <button
+                disabled={syncBusy}
+                onClick={() =>
+                  runSyncTask(async () => {
+                    if (!sync.hasCompletedInitialSync) await markEverythingPending();
+                    await syncNow();
+                  })
+                }
+              >
+                <Cloud />
+                <span>
+                  <b>
+                    {sync.hasCompletedInitialSync
+                      ? "Sincronizar ahora"
+                      : "Subir datos locales y empezar"}
+                  </b>
+                  <small>
+                    {sync.hasCompletedInitialSync
+                      ? "Empuja cambios locales y baja novedades remotas"
+                      : "Primera migración opcional a la nube sin borrar local"}
+                  </small>
+                </span>
+              </button>
+              <button disabled={syncBusy || !sync.online} onClick={() => runSyncTask(() => syncNow())}>
+                <RefreshCw />
+                <span>
+                  <b>Forzar sincronización manual</b>
+                  <small>
+                    {sync.online
+                      ? `${sync.pendingChanges} cambios pendientes`
+                      : "Se lanzará cuando recuperes conexión"}
+                  </small>
+                </span>
+              </button>
+              <button disabled={syncBusy} onClick={() => runSyncTask(() => signOutFromSync())}>
+                <LogOut />
+                <span>
+                  <b>Cerrar sesión</b>
+                  <small>{sync.user.email || "Seguirás usando la app en local"}</small>
+                </span>
+              </button>
+            </div>
+          )}
+        </section>
         <ListSettings settings={d.settings} />
         <section className="panel about">
           <h2>Mi Vestidor</h2>
-          <p>Versión 1.0 · Local-first y sin cuentas.</p>
-          <small>Tus fotos y datos no salen de este dispositivo.</small>
+          <p>Versión 1.0 · Local-first y con sincronización opcional.</p>
+          <small>
+            Tus datos siguen pudiendo vivir solo en este dispositivo si no activas la nube.
+          </small>
         </section>
       </div>
     </>
@@ -3362,7 +3611,8 @@ function WearHistory() {
               <button
                 className="icon-btn"
                 onClick={() =>
-                  confirm("¿Eliminar este uso?") && db.wearLogs.delete(log.id)
+                  confirm("¿Eliminar este uso?") &&
+                  softDeleteRecords("wearLogs", [log.id])
                 }
               >
                 <Trash2 />
@@ -3588,7 +3838,7 @@ function ExitManager() {
                           archivedAt: undefined,
                           archiveReason: undefined,
                         });
-                        await db.closetExits.delete(x.id);
+                        await softDeleteRecords("closetExits", [x.id]);
                       }
                     }}
                   >
@@ -3894,7 +4144,7 @@ function Wishlist() {
                     className="icon-btn"
                     onClick={() =>
                       confirm("¿Eliminar este deseo?") &&
-                      db.wishlistItems.delete(w.id)
+                      softDeleteRecords("wishlistItems", [w.id])
                     }
                   >
                     <Trash2 />

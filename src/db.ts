@@ -9,6 +9,9 @@ import type {
   ClosetExit,
   WishlistItem,
   Space,
+  LocalSyncState,
+  SyncDelete,
+  SyncableCollection,
 } from "./types";
 export const db = new Dexie("MiVestidor") as Dexie & {
   clothingItems: EntityTable<ClothingItem, "id">;
@@ -19,6 +22,8 @@ export const db = new Dexie("MiVestidor") as Dexie & {
   closetExits: EntityTable<ClosetExit, "id">;
   wishlistItems: EntityTable<WishlistItem, "id">;
   spaces: EntityTable<Space, "id">;
+  syncState: EntityTable<LocalSyncState, "id">;
+  syncDeletes: EntityTable<SyncDelete, "id">;
   settings: EntityTable<Settings, "id">;
 };
 db.version(1).stores({
@@ -53,6 +58,21 @@ db.version(3).stores({
   wishlistItems: "id,status,priority,category,createdAt",
   spaces: "id,type,parentId,createdAt",
 });
+db.version(4).stores({
+  clothingItems:
+    "id,name,category,decisionStatus,createdAt,updatedAt,purchaseOrderId,saleRecordId,isArchived,spaceId,userId,syncStatus,lastSyncedAt,*tags",
+  wearLogs: "id,date,updatedAt,userId,syncStatus,*clothingItemIds,outfitId",
+  outfits: "id,name,favorite,updatedAt,userId,syncStatus",
+  settings: "id,updatedAt,userId,syncStatus",
+  purchaseOrders: "id,date,store,updatedAt,userId,syncStatus,*clothingItemIds",
+  saleRecords: "id,date,clothingItemId,platform,updatedAt,userId,syncStatus",
+  closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
+  wishlistItems: "id,status,priority,category,createdAt,updatedAt,userId,syncStatus",
+  spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  syncState: "id,syncEnabled,mode,lastSyncedAt",
+  syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
+});
+const stamp = new Date().toISOString();
 export const defaults: Settings = {
   id: "main",
   categories: [
@@ -118,7 +138,81 @@ export const defaults: Settings = {
     "me encanta",
   ],
   oneInOneOutGoal: true,
+  createdAt: stamp,
+  updatedAt: stamp,
 };
-db.on("populate", () => db.settings.add(defaults));
+export const syncDefaults: LocalSyncState = {
+  id: "main",
+  syncEnabled: false,
+  mode: "local",
+};
+export const syncCollections = [
+  "clothingItems",
+  "wearLogs",
+  "outfits",
+  "settings",
+  "purchaseOrders",
+  "saleRecords",
+  "closetExits",
+  "wishlistItems",
+  "spaces",
+] as const satisfies readonly SyncableCollection[];
+let muteSyncTracking = 0;
+export async function withoutSyncTracking<T>(task: () => Promise<T>) {
+  muteSyncTracking += 1;
+  try {
+    return await task();
+  } finally {
+    muteSyncTracking -= 1;
+  }
+}
+const shouldTrackSync = () => !muteSyncTracking;
+syncCollections.forEach((tableName) => {
+  const table = db.table(tableName);
+  table.hook("creating", (_, obj) => {
+    if (!shouldTrackSync()) return;
+    const at = new Date().toISOString();
+    if ("createdAt" in obj && !obj.createdAt) obj.createdAt = at;
+    if ("updatedAt" in obj && !obj.updatedAt) obj.updatedAt = at;
+    obj.syncStatus = "pending";
+    obj.lastSyncedAt = undefined;
+    obj.deletedAt = undefined;
+    obj.version = (obj.version || 0) + 1;
+  });
+  table.hook("updating", (mods, _, obj: Record<string, unknown>) => {
+    if (!shouldTrackSync()) return mods;
+    const nextMods: Record<string, unknown> = {
+      ...mods,
+      syncStatus: "pending",
+      lastSyncedAt: undefined,
+      version: Number(obj.version || 0) + 1,
+    };
+    if ("updatedAt" in obj) nextMods.updatedAt = new Date().toISOString();
+    return nextMods;
+  });
+});
+db.on("populate", () =>
+  db.transaction("rw", [db.settings, db.syncState], async () => {
+    await db.settings.add(defaults);
+    await db.syncState.add(syncDefaults);
+  }),
+);
+export async function queueSoftDelete(
+  collection: SyncableCollection,
+  docId: string,
+  userId?: string,
+) {
+  const at = new Date().toISOString();
+  await db.syncDeletes.put({
+    id: `${collection}:${docId}`,
+    collection,
+    docId,
+    userId,
+    deletedAt: at,
+    updatedAt: at,
+    syncStatus: "pending",
+    version: 1,
+  });
+}
 export const uid = () => crypto.randomUUID();
 export const today = () => new Date().toISOString().slice(0, 10);
