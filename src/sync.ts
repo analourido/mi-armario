@@ -62,6 +62,18 @@ function tableFor(name: SyncableCollection) {
       return db.spaces as unknown as Table<Record<string, unknown>, string>;
     case "resaleListings":
       return db.resaleListings as unknown as Table<Record<string, unknown>, string>;
+    case "weatherLocations":
+      return db.weatherLocations as unknown as Table<Record<string, unknown>, string>;
+    case "userRoutines":
+      return db.userRoutines as unknown as Table<Record<string, unknown>, string>;
+    case "wardrobeEvents":
+      return db.wardrobeEvents as unknown as Table<Record<string, unknown>, string>;
+    case "trips":
+      return db.trips as unknown as Table<Record<string, unknown>, string>;
+    case "tripPackingItems":
+      return db.tripPackingItems as unknown as Table<Record<string, unknown>, string>;
+    case "tripPlannedOutfits":
+      return db.tripPlannedOutfits as unknown as Table<Record<string, unknown>, string>;
   }
 }
 

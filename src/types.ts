@@ -3,6 +3,19 @@ export type DecisionStatus = "keep" | "sell" | "donate" | "maybe" | "repair";
 export type ExitType =
   "sold" | "donated" | "discarded" | "gifted" | "returned" | "lost";
 export type SpaceType = "home" | "room" | "storage" | "zone";
+export type ApproximateAgeRange =
+  | "less_1_year"
+  | "1_2_years"
+  | "3_5_years"
+  | "more_5_years"
+  | "unknown";
+export type EstimatedPastUse =
+  | "never"
+  | "rarely"
+  | "sometimes"
+  | "often"
+  | "very_often"
+  | "unknown";
 export type SyncStatus = "synced" | "pending" | "error";
 export type SyncMode = "local" | "syncing" | "synced" | "error";
 export type SyncableCollection =
@@ -15,7 +28,13 @@ export type SyncableCollection =
   | "closetExits"
   | "wishlistItems"
   | "spaces"
-  | "resaleListings";
+  | "resaleListings"
+  | "weatherLocations"
+  | "userRoutines"
+  | "wardrobeEvents"
+  | "trips"
+  | "tripPackingItems"
+  | "tripPlannedOutfits";
 export interface SyncMeta {
   userId?: string;
   syncStatus?: SyncStatus;
@@ -39,6 +58,14 @@ export interface ClothingItem extends SyncMeta, ImageSyncMeta {
   size?: string;
   brand?: string;
   store?: string;
+  approximatePurchaseYear?: number;
+  approximateAgeRange?: ApproximateAgeRange;
+  estimatedPastUse?: EstimatedPastUse;
+  currentLoveLevel?: 1 | 2 | 3 | 4 | 5;
+  currentFitLevel?: 1 | 2 | 3 | 4 | 5;
+  currentStyleMatch?: 1 | 2 | 3 | 4 | 5;
+  comfortLevel?: 1 | 2 | 3 | 4 | 5;
+  doubtReason?: string;
   originalPrice?: number;
   estimatedValue?: number;
   purchaseDate?: string;
@@ -125,6 +152,12 @@ export interface WishlistItem extends SyncMeta {
   colors?: string[];
   store?: string;
   estimatedPrice?: number;
+  maxPrice?: number;
+  targetSeason?: string[];
+  plannedUse?: string;
+  similarItemIds?: string[];
+  waitForSale?: boolean;
+  purchaseAdvice?: "buy" | "wait" | "skip" | "review";
   priority: "low" | "medium" | "high";
   reason?: string;
   status: "pending" | "bought" | "discarded";
@@ -173,6 +206,105 @@ export interface ResaleListing extends SyncMeta {
   createdAt: string;
   updatedAt: string;
 }
+export interface WeatherLocation extends SyncMeta {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WeatherCache {
+  id: string;
+  locationId: string;
+  date: string;
+  data: any;
+  fetchedAt: string;
+}
+export interface UserRoutine extends SyncMeta {
+  id: string;
+  dayOfWeek: number;
+  type: "work" | "free" | "study" | "other";
+  startTime?: string;
+  endTime?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WardrobeEvent extends SyncMeta {
+  id: string;
+  title: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  type:
+    | "work"
+    | "dinner"
+    | "party"
+    | "travel"
+    | "beach"
+    | "event"
+    | "casual"
+    | "formal"
+    | "other";
+  dressCode?:
+    | "casual"
+    | "smart_casual"
+    | "formal"
+    | "party"
+    | "comfortable"
+    | "beach";
+  locationName?: string;
+  latitude?: number;
+  longitude?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface Trip extends SyncMeta {
+  id: string;
+  name: string;
+  destinationName: string;
+  latitude?: number;
+  longitude?: number;
+  startDate: string;
+  endDate: string;
+  type:
+    | "vacation"
+    | "work"
+    | "festival"
+    | "wedding"
+    | "beach"
+    | "city"
+    | "other";
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface TripPackingItem extends SyncMeta {
+  id: string;
+  tripId: string;
+  clothingItemId?: string;
+  customName?: string;
+  category?: string;
+  quantity?: number;
+  checked: boolean;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface TripPlannedOutfit extends SyncMeta {
+  id: string;
+  tripId: string;
+  date?: string;
+  eventLabel?: string;
+  outfitId?: string;
+  clothingItemIds: string[];
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface Settings extends SyncMeta {
   id: string;
   categories: string[];
@@ -182,6 +314,10 @@ export interface Settings extends SyncMeta {
   occasions: string[];
   salePlatforms: string[];
   frequentTags?: string[];
+  preferredWorkTags?: string[];
+  preferredWeekendTags?: string[];
+  preferredNightTags?: string[];
+  preferredEventTags?: string[];
   monthlyClothingBudget?: number;
   oneInOneOutGoal?: boolean;
   createdAt?: string;

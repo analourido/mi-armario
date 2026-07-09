@@ -10,6 +10,13 @@ import type {
   WishlistItem,
   Space,
   ResaleListing,
+  WeatherLocation,
+  WeatherCache,
+  UserRoutine,
+  WardrobeEvent,
+  Trip,
+  TripPackingItem,
+  TripPlannedOutfit,
   LocalSyncState,
   SyncDelete,
   SyncableCollection,
@@ -24,6 +31,13 @@ export const db = new Dexie("MiVestidor") as Dexie & {
   wishlistItems: EntityTable<WishlistItem, "id">;
   spaces: EntityTable<Space, "id">;
   resaleListings: EntityTable<ResaleListing, "id">;
+  weatherLocations: EntityTable<WeatherLocation, "id">;
+  weatherCache: EntityTable<WeatherCache, "id">;
+  userRoutines: EntityTable<UserRoutine, "id">;
+  wardrobeEvents: EntityTable<WardrobeEvent, "id">;
+  trips: EntityTable<Trip, "id">;
+  tripPackingItems: EntityTable<TripPackingItem, "id">;
+  tripPlannedOutfits: EntityTable<TripPlannedOutfit, "id">;
   syncState: EntityTable<LocalSyncState, "id">;
   syncDeletes: EntityTable<SyncDelete, "id">;
   settings: EntityTable<Settings, "id">;
@@ -87,6 +101,72 @@ db.version(5).stores({
   spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
   resaleListings:
     "id,clothingItemId,platform,status,listedAt,soldAt,updatedAt,userId,syncStatus",
+  syncState: "id,syncEnabled,mode,lastSyncedAt",
+  syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
+});
+db.version(6).stores({
+  clothingItems:
+    "id,name,category,decisionStatus,createdAt,updatedAt,purchaseOrderId,saleRecordId,isArchived,spaceId,resaleListingId,userId,syncStatus,lastSyncedAt,*tags",
+  wearLogs: "id,date,updatedAt,userId,syncStatus,*clothingItemIds,outfitId",
+  outfits: "id,name,favorite,updatedAt,userId,syncStatus",
+  settings: "id,updatedAt,userId,syncStatus",
+  purchaseOrders: "id,date,store,updatedAt,userId,syncStatus,*clothingItemIds",
+  saleRecords: "id,date,clothingItemId,platform,updatedAt,userId,syncStatus",
+  closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
+  wishlistItems:
+    "id,status,priority,category,createdAt,updatedAt,purchaseAdvice,userId,syncStatus",
+  spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  resaleListings:
+    "id,clothingItemId,platform,status,listedAt,soldAt,updatedAt,userId,syncStatus",
+  syncState: "id,syncEnabled,mode,lastSyncedAt",
+  syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
+});
+db.version(7).stores({
+  clothingItems:
+    "id,name,category,decisionStatus,createdAt,updatedAt,purchaseOrderId,saleRecordId,isArchived,spaceId,resaleListingId,userId,syncStatus,lastSyncedAt,*tags",
+  wearLogs: "id,date,updatedAt,userId,syncStatus,*clothingItemIds,outfitId",
+  outfits: "id,name,favorite,updatedAt,userId,syncStatus",
+  settings: "id,updatedAt,userId,syncStatus",
+  purchaseOrders: "id,date,store,updatedAt,userId,syncStatus,*clothingItemIds",
+  saleRecords: "id,date,clothingItemId,platform,updatedAt,userId,syncStatus",
+  closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
+  wishlistItems:
+    "id,status,priority,category,createdAt,updatedAt,purchaseAdvice,userId,syncStatus",
+  spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  resaleListings:
+    "id,clothingItemId,platform,status,listedAt,soldAt,updatedAt,userId,syncStatus",
+  weatherLocations:
+    "id,name,isDefault,updatedAt,userId,syncStatus,lastSyncedAt",
+  weatherCache: "id,locationId,date,fetchedAt",
+  userRoutines: "id,dayOfWeek,type,updatedAt,userId,syncStatus,lastSyncedAt",
+  wardrobeEvents: "id,date,type,updatedAt,userId,syncStatus,lastSyncedAt",
+  syncState: "id,syncEnabled,mode,lastSyncedAt",
+  syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
+});
+db.version(8).stores({
+  clothingItems:
+    "id,name,category,decisionStatus,createdAt,updatedAt,purchaseOrderId,saleRecordId,isArchived,spaceId,resaleListingId,userId,syncStatus,lastSyncedAt,*tags",
+  wearLogs: "id,date,updatedAt,userId,syncStatus,*clothingItemIds,outfitId",
+  outfits: "id,name,favorite,updatedAt,userId,syncStatus",
+  settings: "id,updatedAt,userId,syncStatus",
+  purchaseOrders: "id,date,store,updatedAt,userId,syncStatus,*clothingItemIds",
+  saleRecords: "id,date,clothingItemId,platform,updatedAt,userId,syncStatus",
+  closetExits: "id,date,clothingItemId,type,updatedAt,userId,syncStatus",
+  wishlistItems:
+    "id,status,priority,category,createdAt,updatedAt,purchaseAdvice,userId,syncStatus",
+  spaces: "id,type,parentId,createdAt,updatedAt,userId,syncStatus",
+  resaleListings:
+    "id,clothingItemId,platform,status,listedAt,soldAt,updatedAt,userId,syncStatus",
+  weatherLocations:
+    "id,name,isDefault,updatedAt,userId,syncStatus,lastSyncedAt",
+  weatherCache: "id,locationId,date,fetchedAt",
+  userRoutines: "id,dayOfWeek,type,updatedAt,userId,syncStatus,lastSyncedAt",
+  wardrobeEvents: "id,date,type,updatedAt,userId,syncStatus,lastSyncedAt",
+  trips: "id,startDate,endDate,type,updatedAt,userId,syncStatus,lastSyncedAt",
+  tripPackingItems:
+    "id,tripId,clothingItemId,checked,updatedAt,userId,syncStatus,lastSyncedAt",
+  tripPlannedOutfits:
+    "id,tripId,date,outfitId,updatedAt,userId,syncStatus,lastSyncedAt,*clothingItemIds",
   syncState: "id,syncEnabled,mode,lastSyncedAt",
   syncDeletes: "id,collection,docId,userId,syncStatus,updatedAt",
 });
@@ -155,6 +235,10 @@ export const defaults: Settings = {
     "vacaciones",
     "me encanta",
   ],
+  preferredWorkTags: ["trabajo", "oficina", "cómodo", "arreglado", "básico"],
+  preferredWeekendTags: ["cómodo", "casual", "relajado"],
+  preferredNightTags: ["noche", "favorito", "arreglado"],
+  preferredEventTags: ["evento", "especial", "arreglado"],
   oneInOneOutGoal: true,
   createdAt: stamp,
   updatedAt: stamp,
@@ -175,6 +259,12 @@ export const syncCollections = [
   "wishlistItems",
   "spaces",
   "resaleListings",
+  "weatherLocations",
+  "userRoutines",
+  "wardrobeEvents",
+  "trips",
+  "tripPackingItems",
+  "tripPlannedOutfits",
 ] as const satisfies readonly SyncableCollection[];
 let muteSyncTracking = 0;
 export async function withoutSyncTracking<T>(task: () => Promise<T>) {

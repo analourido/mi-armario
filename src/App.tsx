@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -29,6 +30,7 @@ import {
 import {
   Archive,
   BarChart3,
+  Brain,
   CalendarDays,
   Camera,
   Check,
@@ -56,6 +58,7 @@ import {
   ShoppingBag,
   Sparkles,
   Store,
+  Suitcase,
   Trash2,
   Undo2,
   Upload,
@@ -89,7 +92,9 @@ import type {
   ClothingItem,
   ClosetExit,
   DecisionStatus,
+  EstimatedPastUse,
   ExitType,
+  ApproximateAgeRange,
   LocalSyncState,
   Outfit,
   PhysicalStatus,
@@ -99,8 +104,23 @@ import type {
   Settings,
   Space,
   SpaceType,
+  Trip,
+  TripPackingItem,
+  TripPlannedOutfit,
+  UserRoutine,
+  WardrobeEvent,
+  WeatherCache,
+  WeatherLocation,
   WishlistItem,
 } from "./types";
+import {
+  buildWeatherContext,
+  defaultWeatherLocation,
+  fetchWeatherForecast,
+  searchWeatherLocations,
+  type DailyWeatherSummary,
+  type WeatherLocationSearchResult,
+} from "./weather";
 
 const money = (n = 0) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(
@@ -137,6 +157,21 @@ const statusClass: Record<DecisionStatus, string> = {
   donate: "donate",
   maybe: "maybe",
   repair: "repair",
+};
+const ageRanges: Record<ApproximateAgeRange, string> = {
+  less_1_year: "Menos de 1 año",
+  "1_2_years": "1-2 años",
+  "3_5_years": "3-5 años",
+  more_5_years: "Más de 5 años",
+  unknown: "No lo sé",
+};
+const estimatedUses: Record<EstimatedPastUse, string> = {
+  never: "Nunca",
+  rarely: "Pocas veces",
+  sometimes: "A veces",
+  often: "A menudo",
+  very_often: "Muchísimo",
+  unknown: "No lo sé",
 };
 const resaleStatuses = {
   to_photo: "Pendiente de fotos",
@@ -220,6 +255,379 @@ function buildListingCopy(item: ClothingItem, listing?: ResaleListing) {
     suggestedPrice: priceBase ? Math.round(priceBase) : undefined,
     summary: attrs.join(" · "),
   };
+}
+type ConfidenceLevel = "alto" | "medio" | "bajo";
+type SmartInsight = {
+  id: string;
+  kind:
+    | "sell"
+    | "donate"
+    | "keep"
+    | "forgotten"
+    | "category"
+    | "renewal"
+    | "duplicate"
+    | "wishlist";
+  title: string;
+  explanation: string;
+  confidence: ConfidenceLevel;
+  itemIds?: string[];
+  category?: string;
+  action?: DecisionStatus | "review_later";
+};
+function confidenceLevel(score: number): ConfidenceLevel {
+  return score >= 72 ? "alto" : score >= 45 ? "medio" : "bajo";
+}
+function average(nums: number[]) {
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+}
+function usesForItem(itemId: string, wears: Data["wears"]) {
+  return wears.filter((w) => w.clothingItemIds.includes(itemId)).length;
+}
+function recentUsesForItem(itemId: string, wears: Data["wears"], days: number) {
+  const limit = Date.now() - days * 86400000;
+  return wears.filter(
+    (w) =>
+      w.clothingItemIds.includes(itemId) &&
+      new Date(w.date).getTime() >= limit,
+  ).length;
+}
+function wishlistAdviceText(
+  wish: WishlistItem,
+  data: Data,
+): { advice: "buy" | "wait" | "skip" | "review"; text: string; relatedItemIds: string[] } {
+  const similar = data.items.filter(
+    (i) =>
+      !i.isArchived &&
+      i.category === wish.category &&
+      (!wish.colors?.length || wish.colors.some((c) => i.colors.includes(c))),
+  );
+  const categoryUses = wish.category
+    ? data.wears.filter((w) =>
+        w.clothingItemIds.some(
+          (id) => data.items.find((i) => i.id === id)?.category === wish.category,
+        ),
+      ).length
+    : 0;
+  const avgSpend =
+    data.orders.length
+      ? data.orders.reduce((sum, order) => sum + order.totalCost, 0) /
+        data.orders.length
+      : 0;
+  if (similar.length >= 4)
+    return {
+      advice: "review",
+      text: `Revisa antes: ya tienes ${similar.length} prendas parecidas.`,
+      relatedItemIds: similar.slice(0, 4).map((i) => i.id),
+    };
+  if (
+    wish.estimatedPrice &&
+    ((avgSpend && wish.estimatedPrice > avgSpend) ||
+      (data.settings.monthlyClothingBudget &&
+        wish.estimatedPrice > data.settings.monthlyClothingBudget))
+  )
+    return {
+      advice: "wait",
+      text: "Quizá espera a rebajas: el precio es alto para tu gasto medio.",
+      relatedItemIds: similar.slice(0, 3).map((i) => i.id),
+    };
+  if (categoryUses >= 6)
+    return {
+      advice: "buy",
+      text: "Puede tener sentido comprarlo: usas mucho esta categoría.",
+      relatedItemIds: similar.slice(0, 3).map((i) => i.id),
+    };
+  return {
+    advice: "review",
+    text: similar.length
+      ? "Si entra esta prenda, podrías revisar estas otras."
+      : "Revísalo con calma: puede ser una compra interesante si cubre un hueco real.",
+    relatedItemIds: similar.slice(0, 3).map((i) => i.id),
+  };
+}
+function smartItemScore(item: ClothingItem, data: Data) {
+  const totalUses = usesForItem(item.id, data.wears);
+  const uses90 = recentUsesForItem(item.id, data.wears, 90);
+  const uses180 = recentUsesForItem(item.id, data.wears, 180);
+  const loved = item.currentLoveLevel || 0;
+  const fit = item.currentFitLevel || 0;
+  const style = item.currentStyleMatch || 0;
+  const comfort = item.comfortLevel || 0;
+  const similar = data.items.filter(
+    (x) =>
+      x.id !== item.id &&
+      !x.isArchived &&
+      x.category === item.category &&
+      x.colors.some((c) => item.colors.includes(c)),
+  );
+  const moreUsedSimilar = similar.filter(
+    (x) => usesForItem(x.id, data.wears) > totalUses,
+  ).length;
+  const favoriteHint =
+    item.tags?.some((tag) =>
+      ["favorita", "me encanta", "favorite"].includes(tag.toLowerCase()),
+    ) || false;
+  let keep = 0,
+    sell = 0,
+    donate = 0,
+    repair = 0,
+    renewal = 0,
+    evidence = 0;
+  if (loved) {
+    keep += loved * 7;
+    sell += loved <= 2 ? 16 : 0;
+    donate += loved <= 2 ? 12 : 0;
+    evidence += 1;
+  }
+  if (fit) {
+    keep += fit * 6;
+    sell += fit <= 2 ? 18 : 0;
+    donate += fit <= 2 ? 10 : 0;
+    evidence += 1;
+  }
+  if (style) {
+    keep += style * 6;
+    sell += style <= 2 ? 14 : 0;
+    donate += style <= 2 ? 12 : 0;
+    evidence += 1;
+  }
+  if (comfort) {
+    keep += comfort * 5;
+    sell += comfort <= 2 ? 10 : 0;
+    evidence += 1;
+  }
+  if (item.estimatedPastUse) {
+    keep +=
+      item.estimatedPastUse === "very_often"
+        ? 18
+        : item.estimatedPastUse === "often"
+          ? 12
+          : item.estimatedPastUse === "sometimes"
+            ? 6
+            : 0;
+    sell += ["never", "rarely"].includes(item.estimatedPastUse) ? 14 : 0;
+    donate += ["never", "rarely"].includes(item.estimatedPastUse) ? 12 : 0;
+    evidence += item.estimatedPastUse !== "unknown" ? 1 : 0;
+  }
+  keep += Math.min(totalUses, 12) * 2;
+  keep += uses90 ? 16 : 0;
+  sell += !uses90 ? 16 : 0;
+  sell += !uses180 ? 10 : 0;
+  donate += !uses180 ? 12 : 0;
+  if (item.decisionStatus === "sell") sell += 18;
+  if (item.decisionStatus === "donate") donate += 18;
+  if (item.decisionStatus === "repair") repair += 20;
+  if (item.physicalStatus === "worn") {
+    repair += 20;
+    renewal += 16;
+  }
+  if (item.physicalStatus === "used") repair += 10;
+  if ((item.estimatedValue || 0) >= 20 && item.physicalStatus === "good")
+    sell += 12;
+  if ((item.estimatedValue || 0) < 15 && !uses180) donate += 10;
+  if (favoriteHint) keep += 18;
+  if (moreUsedSimilar >= 2) sell += 12;
+  const categoryActive = data.items.filter(
+    (x) => !x.isArchived && x.category === item.category,
+  ).length;
+  const categoryUses90 = data.wears.filter((w) =>
+    new Date(w.date).getTime() >= Date.now() - 90 * 86400000 &&
+    w.clothingItemIds.some(
+      (id) => data.items.find((i) => i.id === id)?.category === item.category,
+    ),
+  ).length;
+  if (categoryUses90 >= 6 && ["used", "worn"].includes(item.physicalStatus))
+    renewal += 14;
+  if (categoryActive <= 2 && categoryUses90 >= 4) renewal += 12;
+  const confidence = Math.min(95, 20 + evidence * 15 + (totalUses ? 10 : 0));
+  return {
+    keepScore: Math.round(keep),
+    sellScore: Math.round(sell),
+    donateScore: Math.round(donate),
+    repairScore: Math.round(repair),
+    renewalScore: Math.round(renewal),
+    confidenceScore: confidence,
+    recentUses90: uses90,
+    totalUses,
+    duplicateCount: moreUsedSimilar,
+  };
+}
+function buildSmartInsights(data: Data) {
+  const active = data.items.filter((item) => !item.isArchived);
+  const scored = active.map((item) => ({ item, score: smartItemScore(item, data) }));
+  const sellCandidates = scored
+    .filter((entry) => entry.score.sellScore >= 40)
+    .sort((a, b) => b.score.sellScore - a.score.sellScore)
+    .slice(0, 6);
+  const donateCandidates = scored
+    .filter((entry) => entry.score.donateScore >= 38)
+    .sort((a, b) => b.score.donateScore - a.score.donateScore)
+    .slice(0, 6);
+  const keepWorthy = scored
+    .filter((entry) => entry.score.keepScore >= 50)
+    .sort((a, b) => b.score.keepScore - a.score.keepScore)
+    .slice(0, 6);
+  const forgotten = scored
+    .filter((entry) => !entry.score.recentUses90)
+    .slice(0, 6);
+  const categoryStats = Object.entries(
+    active.reduce((acc, item) => {
+      const current = acc[item.category] || {
+        count: 0,
+        lowRated: 0,
+        recentUses: 0,
+        sellish: 0,
+        prices: [] as number[],
+      };
+      const score = smartItemScore(item, data);
+      current.count += 1;
+      current.lowRated += average([
+        item.currentLoveLevel || 0,
+        item.currentFitLevel || 0,
+        item.currentStyleMatch || 0,
+      ]) <= 2 && item.currentLoveLevel ? 1 : 0;
+      current.recentUses += score.recentUses90;
+      current.sellish += score.sellScore >= 40 || score.donateScore >= 38 ? 1 : 0;
+      if (item.originalPrice && score.totalUses)
+        current.prices.push(item.originalPrice / score.totalUses);
+      acc[item.category] = current;
+      return acc;
+    }, {} as Record<string, { count: number; lowRated: number; recentUses: number; sellish: number; prices: number[] }>),
+  ).map(([category, value]) => ({
+    category,
+    ...value,
+    avgCpu: average(value.prices),
+  }));
+  const saturated = categoryStats
+    .filter((c) => c.count >= 5 && c.sellish >= 2)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+  const keyCategories = categoryStats
+    .filter((c) => c.recentUses >= 6)
+    .sort((a, b) => b.recentUses - a.recentUses)
+    .slice(0, 3);
+  const renewals = categoryStats
+    .filter((c) => c.recentUses >= 4 && c.count <= 2)
+    .slice(0, 3);
+  const duplicates = scored
+    .filter((entry) => entry.score.duplicateCount >= 2)
+    .slice(0, 4);
+  const wishlistWarnings = data.wishlist
+    .filter((w) => w.status === "pending")
+    .map((wish) => ({ wish, advice: wishlistAdviceText(wish, data) }))
+    .filter((entry) => entry.advice.advice !== "buy")
+    .slice(0, 3);
+  const insights: SmartInsight[] = [];
+  if (sellCandidates.length)
+    insights.push({
+      id: "sell-candidates",
+      kind: "sell",
+      title: "Hay prendas que podrían venderse bien",
+      explanation: `Estas prendas combinan poca conexión actual con buen estado o valor recuperable.`,
+      confidence: confidenceLevel(
+        average(sellCandidates.map((entry) => entry.score.confidenceScore)),
+      ),
+      itemIds: sellCandidates.map((entry) => entry.item.id),
+      action: "sell",
+    });
+  if (donateCandidates.length)
+    insights.push({
+      id: "donate-candidates",
+      kind: "donate",
+      title: "Algunas prendas quizá compensan más donarlas",
+      explanation: "Tienen poco uso o poco encaje actual y no parece que la venta vaya a aportar demasiado.",
+      confidence: confidenceLevel(
+        average(donateCandidates.map((entry) => entry.score.confidenceScore)),
+      ),
+      itemIds: donateCandidates.map((entry) => entry.item.id),
+      action: "donate",
+    });
+  if (keepWorthy.length)
+    insights.push({
+      id: "keep-worth",
+      kind: "keep",
+      title: "Estas prendas sí merecen quedarse",
+      explanation: "Tienen señales claras de uso, gusto actual o buen aprovechamiento.",
+      confidence: confidenceLevel(
+        average(keepWorthy.map((entry) => entry.score.confidenceScore)),
+      ),
+      itemIds: keepWorthy.map((entry) => entry.item.id),
+      action: "keep",
+    });
+  if (forgotten.length)
+    insights.push({
+      id: "forgotten",
+      kind: "forgotten",
+      title: "Hay prendas olvidadas que conviene revisar",
+      explanation: "No tienen usos recientes y pueden estar ocupando espacio mental y físico.",
+      confidence: "medio",
+      itemIds: forgotten.map((entry) => entry.item.id),
+      action: "review_later",
+    });
+  saturated.forEach((category) =>
+    insights.push({
+      id: `sat-${category.category}`,
+      kind: "category",
+      title: `${category.category}: quizá está algo saturada`,
+      explanation: `Tienes ${category.count} prendas y varias ya apuntan a salir. Puede ser buena categoría para revisar con calma.`,
+      confidence: "medio",
+      category: category.category,
+      itemIds: active
+        .filter((item) => item.category === category.category)
+        .slice(0, 5)
+        .map((item) => item.id),
+    }),
+  );
+  keyCategories.forEach((category) =>
+    insights.push({
+      id: `key-${category.category}`,
+      kind: "category",
+      title: `${category.category}: es una categoría clave para ti`,
+      explanation: `La estás usando mucho últimamente. Merece la pena cuidar qué se queda y qué se renueva aquí.`,
+      confidence: "alto",
+      category: category.category,
+      itemIds: active
+        .filter((item) => item.category === category.category)
+        .slice(0, 5)
+        .map((item) => item.id),
+    }),
+  );
+  renewals.forEach((category) =>
+    insights.push({
+      id: `ren-${category.category}`,
+      kind: "renewal",
+      title: `${category.category}: puede pedir renovación`,
+      explanation: `La usas bastante y tienes pocas prendas activas. Puede tener sentido reforzar esta categoría.`,
+      confidence: "medio",
+      category: category.category,
+      itemIds: data.wishlist
+        .filter((wish) => wish.category === category.category)
+        .slice(0, 3)
+        .map((wish) => wish.similarItemIds?.[0] || "")
+        .filter(Boolean),
+    }),
+  );
+  if (duplicates.length)
+    insights.push({
+      id: "duplicates",
+      kind: "duplicate",
+      title: "Hay posibles duplicados o prendas muy parecidas",
+      explanation: "Puede que algunas estén compitiendo entre sí mientras otras son claramente las que sí eliges.",
+      confidence: "medio",
+      itemIds: duplicates.map((entry) => entry.item.id),
+      action: "sell",
+    });
+  wishlistWarnings.forEach((entry) =>
+    insights.push({
+      id: `wish-${entry.wish.id}`,
+      kind: "wishlist",
+      title: `Wishlist: ${entry.wish.name}`,
+      explanation: entry.advice.text,
+      confidence: "medio",
+      itemIds: entry.advice.relatedItemIds,
+    }),
+  );
+  return { insights, scored };
 }
 
 async function compressImage(file?: File) {
@@ -309,7 +717,13 @@ async function softDeleteRecords(
     | "closetExits"
     | "wishlistItems"
     | "spaces"
-    | "resaleListings",
+    | "resaleListings"
+    | "weatherLocations"
+    | "userRoutines"
+    | "wardrobeEvents"
+    | "trips"
+    | "tripPackingItems"
+    | "tripPlannedOutfits",
   ids: string[],
 ) {
   await withoutSyncTracking(async () => {
@@ -340,6 +754,24 @@ async function softDeleteRecords(
         case "resaleListings":
           await db.resaleListings.delete(id);
           break;
+        case "weatherLocations":
+          await db.weatherLocations.delete(id);
+          break;
+        case "userRoutines":
+          await db.userRoutines.delete(id);
+          break;
+        case "wardrobeEvents":
+          await db.wardrobeEvents.delete(id);
+          break;
+        case "trips":
+          await db.trips.delete(id);
+          break;
+        case "tripPackingItems":
+          await db.tripPackingItems.delete(id);
+          break;
+        case "tripPlannedOutfits":
+          await db.tripPlannedOutfits.delete(id);
+          break;
       }
     }
   });
@@ -365,6 +797,176 @@ async function deleteSpaceBranch(space: Space, data: Data) {
   });
 }
 
+const routineTypes: Record<UserRoutine["type"], string> = {
+  work: "Trabajo",
+  free: "Libre",
+  study: "Estudio",
+  other: "Otro",
+};
+const eventTypes: Record<WardrobeEvent["type"], string> = {
+  work: "Trabajo",
+  dinner: "Cena",
+  party: "Fiesta",
+  travel: "Viaje",
+  beach: "Playa",
+  event: "Evento",
+  casual: "Plan casual",
+  formal: "Plan formal",
+  other: "Otro",
+};
+const dressCodeLabels: Record<NonNullable<WardrobeEvent["dressCode"]>, string> = {
+  casual: "Casual",
+  smart_casual: "Smart casual",
+  formal: "Formal",
+  party: "Fiesta",
+  comfortable: "Cómodo",
+  beach: "Playa",
+};
+const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+const weekdayNames = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+];
+
+function normalizeText(value = "") {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function dateDayOfWeek(date: string) {
+  return new Date(`${date}T12:00:00`).getDay();
+}
+
+function isWeekend(date: string) {
+  const day = dateDayOfWeek(date);
+  return day === 0 || day === 6;
+}
+
+function dayLabel(date: string) {
+  return weekdayNames[dateDayOfWeek(date)];
+}
+
+function nextDates(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const value = new Date();
+    value.setDate(value.getDate() + index);
+    return value.toISOString().slice(0, 10);
+  });
+}
+
+function timeRangeLabel(start?: string, end?: string) {
+  if (start && end) return `${start}–${end}`;
+  return start || end || "Sin hora";
+}
+
+function eventMoment(startTime?: string) {
+  const hour = Number(startTime?.slice(0, 2) || 12);
+  if (hour < 14) return "Mañana";
+  if (hour < 20) return "Tarde";
+  return "Noche";
+}
+
+function routineSummary(routine?: UserRoutine) {
+  if (!routine) return "Sin rutina guardada";
+  return `${routineTypes[routine.type]}${routine.startTime || routine.endTime ? ` · ${timeRangeLabel(routine.startTime, routine.endTime)}` : ""}`;
+}
+
+function eventSummary(event: WardrobeEvent) {
+  return `${eventTypes[event.type]}${event.startTime || event.endTime ? ` · ${timeRangeLabel(event.startTime, event.endTime)}` : ""}`;
+}
+
+function getDefaultWeatherLocation(locations: WeatherLocation[]) {
+  return locations.find((location) => location.isDefault) || locations[0] || defaultWeatherLocation;
+}
+
+function weatherCacheEntry(
+  cache: WeatherCache[],
+  locationId: string,
+  date: string,
+) {
+  return cache
+    .filter((entry) => entry.locationId === locationId && entry.date === date)
+    .sort((a, b) => b.fetchedAt.localeCompare(a.fetchedAt))[0];
+}
+
+function cachedForecast(
+  cache: WeatherCache[],
+  locationId: string,
+  days = 4,
+) {
+  return cache
+    .filter((entry) => entry.locationId === locationId && entry.date >= today())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, days)
+    .map((entry) => entry.data as DailyWeatherSummary);
+}
+
+function weatherNeedsRefresh(
+  cache: WeatherCache[],
+  locationId: string,
+  days = 4,
+) {
+  const entries = cache
+    .filter((entry) => entry.locationId === locationId && entry.date >= today())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, days);
+  if (entries.length < Math.min(days, 3)) return true;
+  return entries.some(
+    (entry) => Date.now() - new Date(entry.fetchedAt).getTime() > 4 * 3600000,
+  );
+}
+
+async function ensureDefaultWeatherLocation() {
+  const locations = await db.weatherLocations.toArray();
+  if (!locations.length) {
+    await db.weatherLocations.put(defaultWeatherLocation);
+    return defaultWeatherLocation;
+  }
+  if (!locations.some((location) => location.isDefault)) {
+    const first = locations[0];
+    await db.weatherLocations.update(first.id, {
+      isDefault: true,
+      updatedAt: now(),
+    });
+    return { ...first, isDefault: true };
+  }
+  return getDefaultWeatherLocation(locations);
+}
+
+async function setDefaultWeatherLocation(locationId: string) {
+  const stamp = now();
+  const locations = await db.weatherLocations.toArray();
+  await db.weatherLocations.bulkPut(
+    locations.map((location) => ({
+      ...location,
+      isDefault: location.id === locationId,
+      updatedAt: stamp,
+    })),
+  );
+}
+
+async function refreshWeather(location: WeatherLocation, days = 5) {
+  const forecast = await fetchWeatherForecast(location, days);
+  const fetchedAt = now();
+  await db.weatherCache.bulkPut(
+    forecast.map((entry) => ({
+      id: `${location.id}:${entry.date}`,
+      locationId: location.id,
+      date: entry.date,
+      data: entry,
+      fetchedAt,
+    })),
+  );
+  return forecast;
+}
+
 function useData() {
   return (
     useLiveQuery(
@@ -378,6 +980,13 @@ function useData() {
         wishlist: await db.wishlistItems.toArray(),
         spaces: await db.spaces.toArray(),
         resaleListings: await db.resaleListings.toArray(),
+        weatherLocations: await db.weatherLocations.toArray(),
+        weatherCache: await db.weatherCache.toArray(),
+        userRoutines: await db.userRoutines.toArray(),
+        wardrobeEvents: await db.wardrobeEvents.toArray(),
+        trips: await db.trips.toArray(),
+        tripPackingItems: await db.tripPackingItems.toArray(),
+        tripPlannedOutfits: await db.tripPlannedOutfits.toArray(),
         syncState: (await db.syncState.get("main")) || syncDefaults,
         settings: (await db.settings.get("main")) || defaults,
       }),
@@ -392,12 +1001,323 @@ function useData() {
       wishlist: [],
       spaces: [],
       resaleListings: [],
+      weatherLocations: [],
+      weatherCache: [],
+      userRoutines: [],
+      wardrobeEvents: [],
+      trips: [],
+      tripPackingItems: [],
+      tripPlannedOutfits: [],
       syncState: syncDefaults,
       settings: defaults,
     }
   );
 }
 type Data = ReturnType<typeof useData>;
+type RecommendationContext = {
+  id: string;
+  date: string;
+  title: string;
+  subtitle: string;
+  moment: "Mañana" | "Tarde" | "Noche" | "Todo el día";
+  kind: "routine" | "event" | "day";
+  type:
+    | "work"
+    | "free"
+    | "study"
+    | "dinner"
+    | "party"
+    | "travel"
+    | "beach"
+    | "event"
+    | "casual"
+    | "formal"
+    | "other";
+  dressCode?: WardrobeEvent["dressCode"];
+};
+type RecommendedLook = {
+  id: string;
+  context: RecommendationContext;
+  source: "outfit" | "composed";
+  outfitId?: string;
+  items: ClothingItem[];
+  weather?: DailyWeatherSummary;
+  reasons: string[];
+  weatherLine: string;
+};
+
+function itemDescriptor(item: ClothingItem) {
+  return normalizeText(
+    [
+      item.name,
+      item.category,
+      item.subcategory,
+      item.brand,
+      item.notes,
+      ...(item.tags || []),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function itemMatchesTerms(item: ClothingItem, terms: string[]) {
+  const text = itemDescriptor(item);
+  return terms.filter((term) => text.includes(normalizeText(term))).length;
+}
+
+function itemIsDelicate(item: ClothingItem) {
+  return /delicad|seda|ante|sat(e|é)n/.test(itemDescriptor(item));
+}
+
+function itemIsClosedShoe(item: ClothingItem) {
+  return /bota|zapato|zapatilla|mocasin|loafer|botin|sneaker/.test(
+    itemDescriptor(item),
+  );
+}
+
+function itemIsOpenShoe(item: ClothingItem) {
+  return /sandalia|pala|destalonad|chancla|alpargata/.test(itemDescriptor(item));
+}
+
+function preferredContextTerms(
+  context: RecommendationContext,
+  settings: Settings,
+) {
+  const work = [...(settings.preferredWorkTags || [])];
+  const weekend = [...(settings.preferredWeekendTags || [])];
+  const night = [...(settings.preferredNightTags || [])];
+  const events = [...(settings.preferredEventTags || [])];
+  switch (context.type) {
+    case "work":
+      return [...work, "trabajo", "oficina", "cómodo", "arreglado", "básico"];
+    case "dinner":
+      return [...night, ...events, "arreglado", "favorito", "cómodo", "noche"];
+    case "party":
+      return [...night, ...events, "fiesta", "noche", "especial"];
+    case "travel":
+      return ["cómodo", "viaje", "fácil", ...weekend];
+    case "beach":
+      return ["playa", "verano", "ligero", "cómodo"];
+    case "formal":
+      return [...events, "formal", "arreglado", "especial"];
+    case "event":
+      return [...events, "evento", "arreglado", "especial"];
+    case "study":
+      return ["cómodo", "básico", "estudio"];
+    case "free":
+    case "casual":
+      return [...weekend, "cómodo", "casual", "básico"];
+    default:
+      return ["cómodo", "básico"];
+  }
+}
+
+function seasonMatchesWeather(item: ClothingItem, weather?: DailyWeatherSummary) {
+  if (!weather) return true;
+  const seasons = item.season || [];
+  if (seasons.includes("Todo el año")) return true;
+  if (weather.temperatureMax > 23) return seasons.includes("Verano");
+  if (weather.temperatureMax >= 17) {
+    return (
+      seasons.includes("Primavera") ||
+      seasons.includes("Entretiempo") ||
+      seasons.includes("Otoño")
+    );
+  }
+  if (weather.temperatureMax >= 10) {
+    return seasons.includes("Otoño") || seasons.includes("Entretiempo");
+  }
+  return seasons.includes("Invierno") || seasons.includes("Otoño");
+}
+
+function scoreItemForContext(
+  item: ClothingItem,
+  zone: OutfitZone,
+  context: RecommendationContext,
+  weather: ReturnType<typeof buildWeatherContext>,
+  data: Data,
+  weatherDay?: DailyWeatherSummary,
+) {
+  if (item.isArchived) return -999;
+  if (outfitZone(item) !== zone) return -999;
+  let score = 20;
+  score += itemMatchesTerms(item, preferredContextTerms(context, data.settings)) * 3;
+  score += seasonMatchesWeather(item, weatherDay) ? 3 : -1;
+  if (item.currentLoveLevel) score += item.currentLoveLevel;
+  if (item.currentFitLevel) score += item.currentFitLevel;
+  if (item.currentStyleMatch) score += item.currentStyleMatch;
+  if (item.comfortLevel) score += item.comfortLevel;
+  if (item.decisionStatus === "keep") score += 3;
+  if (item.decisionStatus === "maybe") score -= 2;
+  if (item.decisionStatus === "sell" || item.decisionStatus === "donate") score -= 4;
+  if (recentUsesForItem(item.id, data.wears, 30)) score += 1;
+  if (item.tags?.some((tag) => normalizeText(tag).includes("encanta"))) score += 2;
+  if (zone === "shoes") {
+    if (weather.needsClosedShoes && itemIsClosedShoe(item)) score += 6;
+    if (weather.needsClosedShoes && itemIsOpenShoe(item)) score -= 6;
+    if (!weather.needsClosedShoes && itemIsOpenShoe(item)) score += 2;
+  }
+  if (zone === "top") {
+    if (weather.needsJacket && /chaqueta|abrigo|jersey|sudadera/.test(itemDescriptor(item)))
+      score += 4;
+    if (weather.isHot && /abrigo|jersey grueso/.test(itemDescriptor(item))) score -= 5;
+  }
+  if (weather.isRainy && itemIsDelicate(item)) score -= 4;
+  return score;
+}
+
+function contextsForDate(date: string, data: Data) {
+  const sameDayEvents = data.wardrobeEvents
+    .filter((event) => event.date === date)
+    .sort(
+      (a, b) =>
+        (a.startTime || "12:00").localeCompare(b.startTime || "12:00") ||
+        a.title.localeCompare(b.title),
+    );
+  const routine = data.userRoutines.find(
+    (entry) => entry.dayOfWeek === dateDayOfWeek(date),
+  );
+  const contexts: RecommendationContext[] = [];
+  const hasWorkEvent = sameDayEvents.some((event) => event.type === "work");
+  if (routine && !(routine.type === "work" && hasWorkEvent)) {
+    contexts.push({
+      id: `${date}:routine:${routine.id}`,
+      date,
+      title: routineTypes[routine.type],
+      subtitle: routineSummary(routine),
+      moment:
+        routine.startTime && Number(routine.startTime.slice(0, 2)) >= 17
+          ? "Tarde"
+          : "Mañana",
+      kind: "routine",
+      type:
+        routine.type === "free"
+          ? isWeekend(date)
+            ? "free"
+            : "casual"
+          : routine.type,
+    });
+  }
+  sameDayEvents.forEach((event) =>
+    contexts.push({
+      id: `${date}:event:${event.id}`,
+      date,
+      title: event.title,
+      subtitle: eventSummary(event),
+      moment: eventMoment(event.startTime),
+      kind: "event",
+      type: event.type,
+      dressCode: event.dressCode,
+    }),
+  );
+  if (!contexts.length) {
+    contexts.push({
+      id: `${date}:day`,
+      date,
+      title: isWeekend(date) ? "Día libre" : "Día de diario",
+      subtitle: isWeekend(date) ? "Sin evento guardado" : "Rutina suave sin evento",
+      moment: "Todo el día",
+      kind: "day",
+      type: isWeekend(date) ? "free" : "casual",
+    });
+  }
+  return contexts.slice(0, 3);
+}
+
+function buildRecommendation(
+  data: Data,
+  context: RecommendationContext,
+  weather?: DailyWeatherSummary,
+  variant = 0,
+) {
+  const weatherContext = buildWeatherContext(weather, {
+    night: context.moment === "Noche",
+  });
+  const activeItems = data.items.filter((item) => !item.isArchived);
+  const zoneOrder: OutfitZone[] = ["top", "middle", "shoes"];
+  const items = zoneOrder
+    .map((zone, index) => {
+      const ranked = activeItems
+        .filter((item) => outfitZone(item) === zone)
+        .sort(
+          (a, b) =>
+            scoreItemForContext(b, zone, context, weatherContext, data, weather) -
+            scoreItemForContext(a, zone, context, weatherContext, data, weather),
+        );
+      if (!ranked.length) return undefined;
+      return ranked[(variant + index) % ranked.length];
+    })
+    .filter(Boolean) as ClothingItem[];
+  const outfitCandidates = data.outfits
+    .map((outfit) => {
+      const outfitItems = outfit.clothingItemIds
+        .map((id) => activeItems.find((item) => item.id === id))
+        .filter(Boolean) as ClothingItem[];
+      const score =
+        outfitItems.reduce((sum, item) => {
+          const zone = outfitZone(item);
+          return sum + (zone ? scoreItemForContext(item, zone, context, weatherContext, data, weather) : 0);
+        }, 0) +
+        (outfit.favorite ? 8 : 0) +
+        (outfit.occasion &&
+        normalizeText(outfit.occasion).includes(normalizeText(context.title))
+          ? 4
+          : 0);
+      return { outfit, items: outfitItems, score };
+    })
+    .filter((entry) => entry.items.length >= 2)
+    .sort((a, b) => b.score - a.score);
+  const chosenOutfit =
+    outfitCandidates.length && outfitCandidates[0].score >= items.length * 20
+      ? outfitCandidates[variant % outfitCandidates.length]
+      : undefined;
+  const chosenItems = chosenOutfit?.items.length ? chosenOutfit.items : items;
+  if (!chosenItems.length) return;
+  const reasons = [
+    `${context.title}: priorizo ${preferredContextTerms(context, data.settings)
+      .slice(0, 3)
+      .join(", ")}.`,
+    weatherContext.notes.length
+      ? weatherContext.notes.slice(0, 2).join(". ") + "."
+      : "Sin clima suficiente, me apoyo más en tu armario y el contexto.",
+    chosenOutfit?.outfit.favorite
+      ? "Además encaja un outfit favorito que ya te funciona."
+      : "Compongo el look con prendas disponibles y fáciles de combinar.",
+  ];
+  return {
+    id: context.id,
+    context,
+    source: chosenOutfit ? "outfit" : "composed",
+    outfitId: chosenOutfit?.outfit.id,
+    items: chosenItems,
+    reasons,
+    weather,
+    weatherLine: weather
+      ? `${weather.description} · ${Math.round(weather.temperatureMin)}–${Math.round(weather.temperatureMax)}°C · lluvia ${Math.round(weather.precipitationProbabilityMax)}%`
+      : "Sin clima descargado todavía",
+  } as RecommendedLook;
+}
+
+function recommendationOverview(data: Data) {
+  const location = getDefaultWeatherLocation(data.weatherLocations);
+  const forecast = cachedForecast(data.weatherCache, location.id, 1)[0];
+  const context = contextsForDate(today(), data)[0];
+  return {
+    location,
+    forecast,
+    recommendation: context ? buildRecommendation(data, context, forecast) : undefined,
+    upcomingEvents: data.wardrobeEvents
+      .filter((event) => event.date >= today())
+      .sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          (a.startTime || "12:00").localeCompare(b.startTime || "12:00"),
+      )
+      .slice(0, 3),
+  };
+}
+
 function Button({
   children,
   variant = "primary",
@@ -503,6 +1423,9 @@ function Stat({
 }
 function App() {
   useSyncController();
+  useEffect(() => {
+    ensureDefaultWeatherLocation().catch(() => undefined);
+  }, []);
   return (
     <div className="shell">
       <Sidebar />
@@ -513,6 +1436,9 @@ function App() {
           <Route path="/prenda/nueva" element={<ItemForm />} />
           <Route path="/prenda/:id" element={<ItemDetail />} />
           <Route path="/prenda/:id/editar" element={<ItemForm />} />
+          <Route path="/que-ponerme" element={<WhatToWearPage />} />
+          <Route path="/viajes" element={<TripsPage />} />
+          <Route path="/viajes/:id" element={<TripDetail />} />
           <Route path="/outfits" element={<Outfits />} />
           <Route path="/outfits/crear" element={<OutfitBuilder />} />
           <Route path="/usos" element={<WearHistory />} />
@@ -520,6 +1446,7 @@ function App() {
           <Route path="/espacios" element={<SpacesPage />} />
           <Route path="/espacios/:id" element={<SpaceDetail />} />
           <Route path="/plan-venta" element={<ResalePlan />} />
+          <Route path="/revision" element={<SmartReviewPage />} />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="/salidas" element={<ExitManager />} />
           <Route path="/decisiones" element={<Decisions />} />
@@ -535,11 +1462,14 @@ function App() {
 const nav = [
   ["/", Home, "Inicio"],
   ["/armario", Shirt, "Armario"],
+  ["/que-ponerme", Cloud, "Qué ponerme"],
+  ["/viajes", Suitcase, "Viajes"],
   ["/espacios", MapPin, "Espacios"],
   ["/outfits", Heart, "Outfits"],
   ["/usos", CalendarDays, "Usos"],
   ["/pedidos", PackagePlus, "Pedidos"],
   ["/plan-venta", Store, "Plan de venta"],
+  ["/revision", Brain, "Revisión"],
   ["/decisiones", Archive, "Decidir"],
   ["/balance", WalletCards, "Balance"],
   ["/estadisticas", BarChart3, "Estadísticas"],
@@ -576,7 +1506,7 @@ function Sidebar() {
   );
 }
 function BottomNav() {
-  const mobile = [nav[0], nav[1], nav[3], nav[7]];
+  const mobile = [nav[0], nav[1], nav[2], nav[4]];
   return (
     <nav className="bottom-nav">
       {mobile.map(([to, I, label]) => (
@@ -596,6 +1526,15 @@ function BottomNav() {
 function Dashboard() {
   const d = useData(),
     n = useNavigate();
+  const contextOverview = recommendationOverview(d);
+  useEffect(() => {
+    if (
+      contextOverview.location?.id &&
+      weatherNeedsRefresh(d.weatherCache, contextOverview.location.id, 4)
+    ) {
+      refreshWeather(contextOverview.location, 5).catch(() => undefined);
+    }
+  }, [d.weatherCache, contextOverview.location]);
   const m = currentMonth();
   const spent = d.orders
       .filter((o) => month(o.date) === m)
@@ -616,6 +1555,14 @@ function Dashboard() {
   const wearCount = (id: string) =>
     d.wears.filter((w) => w.clothingItemIds.includes(id)).length;
   const activeItems = d.items.filter((i) => !i.isArchived);
+  const smart = buildSmartInsights(d);
+  const reviewCount = smart.insights
+    .filter((insight) => ["sell", "donate", "forgotten", "duplicate"].includes(insight.kind))
+    .reduce((sum, insight) => sum + (insight.itemIds?.length || 0), 0);
+  const wishlistNotice = d.wishlist
+    .filter((w) => w.status === "pending")
+    .map((wish) => wishlistAdviceText(wish, d))
+    .filter((entry) => entry.advice !== "buy").length;
   const resalePlan = d.resaleListings,
     pendingPhotos = resalePlan.filter((x) => x.status === "to_photo").length,
     readyDrafts = resalePlan.filter(
@@ -723,6 +1670,13 @@ function Dashboard() {
             <small>Mezcla prendas de tu armario</small>
           </span>
         </NavLink>
+        <NavLink to="/que-ponerme">
+          <Cloud />
+          <span>
+            <b>Qué ponerme</b>
+            <small>Clima, rutina y eventos en una recomendación</small>
+          </span>
+        </NavLink>
         <NavLink to="/pedidos">
           <PackagePlus />
           <span>
@@ -751,7 +1705,68 @@ function Dashboard() {
             <small>{d.wishlist.filter((w) => w.status === "pending").length} deseos pendientes</small>
           </span>
         </NavLink>
+        <NavLink to="/revision">
+          <Brain />
+          <span>
+            <b>Revisión inteligente</b>
+            <small>Insights suaves para decidir mejor</small>
+          </span>
+        </NavLink>
       </div>
+      <section className="panel location-summary">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">QUÉ PONERME</p>
+            <h2>Clima, agenda y outfits listos para hoy</h2>
+          </div>
+          <NavLink to="/que-ponerme">Abrir módulo</NavLink>
+        </div>
+        <div className="location-summary-grid">
+          <div>
+            <b>
+              {contextOverview.forecast
+                ? `${Math.round(contextOverview.forecast.temperatureMin)}–${Math.round(contextOverview.forecast.temperatureMax)}°C`
+                : "Clima pendiente"}
+            </b>
+            <small>
+              {contextOverview.forecast
+                ? `${contextOverview.location.name} · ${contextOverview.forecast.description}`
+                : `Descarga el clima de ${contextOverview.location.name} para afinar recomendaciones`}
+            </small>
+          </div>
+          <div>
+            <b>{contextOverview.recommendation?.context.title || "Sin recomendación aún"}</b>
+            <small>
+              {contextOverview.upcomingEvents.length
+                ? `${contextOverview.upcomingEvents.length} eventos próximos · ${contextOverview.upcomingEvents[0].title}`
+                : contextOverview.recommendation?.reasons[0] || "Añade rutinas o eventos para contextualizar mejor"}
+            </small>
+          </div>
+        </div>
+      </section>
+      <section className="panel location-summary">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">REVISIÓN INTELIGENTE</p>
+            <h2>Ayuda local para decidir qué se queda y qué sale</h2>
+          </div>
+          <NavLink to="/revision">Abrir revisión</NavLink>
+        </div>
+        <div className="location-summary-grid">
+          <div>
+            <b>{smart.insights[0]?.title || "Sin alertas fuertes"}</b>
+            <small>{smart.insights[0]?.explanation || "Cuando haya más señales útiles aparecerán aquí."}</small>
+          </div>
+          <div>
+            <b>{reviewCount} prendas para revisar</b>
+            <small>
+              {wishlistNotice
+                ? `${wishlistNotice} avisos en wishlist para comprar con más criterio`
+                : "Tu wishlist no tiene avisos importantes ahora mismo"}
+            </small>
+          </div>
+        </div>
+      </section>
       <section className="panel location-summary">
         <div className="section-title">
           <div>
@@ -1386,6 +2401,140 @@ function ItemForm() {
             </label>
           )}
         </FormSection>
+        <FormSection
+          title="Datos aproximados"
+          intro="Opcional. Solo lo justo para que la revisión inteligente entienda mejor esta prenda."
+        >
+          <label>
+            Año aproximado de compra
+            <input
+              type="number"
+              min="1990"
+              max={new Date().getFullYear()}
+              value={form.approximatePurchaseYear ?? ""}
+              onChange={(e) =>
+                set(
+                  "approximatePurchaseYear",
+                  e.target.value ? +e.target.value : undefined,
+                )
+              }
+            />
+          </label>
+          <label>
+            Antigüedad aproximada
+            <select
+              value={form.approximateAgeRange || "unknown"}
+              onChange={(e) =>
+                set("approximateAgeRange", e.target.value as ApproximateAgeRange)
+              }
+            >
+              {Object.entries(ageRanges).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            ¿La usabas antes?
+            <select
+              value={form.estimatedPastUse || "unknown"}
+              onChange={(e) =>
+                set("estimatedPastUse", e.target.value as EstimatedPastUse)
+              }
+            >
+              {Object.entries(estimatedUses).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Amor actual
+            <select
+              value={form.currentLoveLevel ?? ""}
+              onChange={(e) =>
+                set(
+                  "currentLoveLevel",
+                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
+                )
+              }
+            >
+              <option value="">Sin indicar</option>
+              {[1, 2, 3, 4, 5].map((x) => (
+                <option key={x} value={x}>
+                  {x}/5
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Queda bien
+            <select
+              value={form.currentFitLevel ?? ""}
+              onChange={(e) =>
+                set(
+                  "currentFitLevel",
+                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
+                )
+              }
+            >
+              <option value="">Sin indicar</option>
+              {[1, 2, 3, 4, 5].map((x) => (
+                <option key={x} value={x}>
+                  {x}/5
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Encaja con tu estilo
+            <select
+              value={form.currentStyleMatch ?? ""}
+              onChange={(e) =>
+                set(
+                  "currentStyleMatch",
+                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
+                )
+              }
+            >
+              <option value="">Sin indicar</option>
+              {[1, 2, 3, 4, 5].map((x) => (
+                <option key={x} value={x}>
+                  {x}/5
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Comodidad
+            <select
+              value={form.comfortLevel ?? ""}
+              onChange={(e) =>
+                set(
+                  "comfortLevel",
+                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
+                )
+              }
+            >
+              <option value="">Sin indicar</option>
+              {[1, 2, 3, 4, 5].map((x) => (
+                <option key={x} value={x}>
+                  {x}/5
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="full">
+            Motivo de duda
+            <textarea
+              value={form.doubtReason || ""}
+              onChange={(e) => set("doubtReason", e.target.value)}
+              placeholder="Ej. ya no me representa, me aprieta, no sé combinarla..."
+            />
+          </label>
+        </FormSection>
         <FormSection title="Notas">
           <label className="full">
             Algo que quieras recordar
@@ -1431,11 +2580,13 @@ function ItemDetail() {
     d = useData(),
     n = useNavigate(),
     item = d.items.find((i) => i.id === id),
-    [vintedOpen, setVintedOpen] = useState(false);
+    [vintedOpen, setVintedOpen] = useState(false),
+    [reviewOpen, setReviewOpen] = useState(false);
   if (!item)
     return (
       <Empty title="Prenda no encontrada" text="Puede que se haya eliminado." />
     );
+  const smart = smartItemScore(item, d);
   const logs = d.wears
     .filter((w) => w.clothingItemIds.includes(item.id))
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -1518,6 +2669,9 @@ function ItemDetail() {
             >
               <Pencil /> Editar
             </Button>
+            <Button variant="secondary" onClick={() => setReviewOpen(true)}>
+              <Brain /> Revisar prenda
+            </Button>
             <Button variant="ghost" onClick={remove}>
               <Trash2 /> Eliminar
             </Button>
@@ -1543,6 +2697,7 @@ function ItemDetail() {
                   : "Sin precio"
               }
             />
+            <Stat label="Confianza revisión" value={`${smart.confidenceScore}%`} />
           </div>
           <div className="detail-location">
             <small>Ubicación</small>
@@ -1561,6 +2716,21 @@ function ItemDetail() {
             <Fact l="Talla" v={item.size} />
             <Fact l="Marca" v={item.brand} />
             <Fact l="Tienda" v={item.store} />
+            <Fact
+              l="Valoración actual"
+              v={
+                [
+                  item.currentLoveLevel && `amor ${item.currentLoveLevel}/5`,
+                  item.currentFitLevel && `fit ${item.currentFitLevel}/5`,
+                  item.currentStyleMatch && `estilo ${item.currentStyleMatch}/5`,
+                  item.comfortLevel && `comodidad ${item.comfortLevel}/5`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+            />
+            <Fact l="Uso pasado estimado" v={item.estimatedPastUse ? estimatedUses[item.estimatedPastUse] : undefined} />
+            <Fact l="Antigüedad aproximada" v={item.approximateAgeRange ? ageRanges[item.approximateAgeRange] : undefined} />
             <Fact l="Fecha de compra" v={dateFmt(item.purchaseDate)} />
             <Fact
               l="Precio original"
@@ -1579,6 +2749,7 @@ function ItemDetail() {
               }
             />
             {item.notes && <Fact l="Notas" v={item.notes} />}
+            {item.doubtReason && <Fact l="Motivo de duda" v={item.doubtReason} />}
           </section>
           <div className="quick-decision">
             <p>Decisión rápida</p>
@@ -1602,6 +2773,12 @@ function ItemDetail() {
       {vintedOpen && (
         <VintedModal item={item} close={() => setVintedOpen(false)} />
       )}
+      {reviewOpen && (
+        <ReviewItemModal
+          item={item}
+          close={() => setReviewOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -1612,6 +2789,152 @@ function Fact({ l, v }: { l: string; v?: string }) {
       <p>{v}</p>
     </div>
   ) : null;
+}
+
+function ReviewItemModal({
+  item,
+  close,
+}: {
+  item: ClothingItem;
+  close: () => void;
+}) {
+  const [form, setForm] = useState({
+    currentLoveLevel: item.currentLoveLevel?.toString() || "",
+    currentFitLevel: item.currentFitLevel?.toString() || "",
+    currentStyleMatch: item.currentStyleMatch?.toString() || "",
+    comfortLevel: item.comfortLevel?.toString() || "",
+    estimatedPastUse: item.estimatedPastUse || ("unknown" as EstimatedPastUse),
+    decisionStatus: item.decisionStatus,
+    doubtReason: item.doubtReason || "",
+  });
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    await db.clothingItems.update(item.id, {
+      currentLoveLevel: form.currentLoveLevel
+        ? (+form.currentLoveLevel as 1 | 2 | 3 | 4 | 5)
+        : undefined,
+      currentFitLevel: form.currentFitLevel
+        ? (+form.currentFitLevel as 1 | 2 | 3 | 4 | 5)
+        : undefined,
+      currentStyleMatch: form.currentStyleMatch
+        ? (+form.currentStyleMatch as 1 | 2 | 3 | 4 | 5)
+        : undefined,
+      comfortLevel: form.comfortLevel
+        ? (+form.comfortLevel as 1 | 2 | 3 | 4 | 5)
+        : undefined,
+      estimatedPastUse: form.estimatedPastUse,
+      decisionStatus: form.decisionStatus as DecisionStatus,
+      doubtReason: form.doubtReason || undefined,
+      updatedAt: now(),
+    });
+    close();
+  }
+  return (
+    <Modal title="Revisar prenda" onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          ¿Te gusta actualmente?
+          <select
+            value={form.currentLoveLevel}
+            onChange={(e) => setForm({ ...form, currentLoveLevel: e.target.value })}
+          >
+            <option value="">Sin indicar</option>
+            {[1, 2, 3, 4, 5].map((x) => (
+              <option key={x} value={x}>
+                {x}/5
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          ¿Te queda bien?
+          <select
+            value={form.currentFitLevel}
+            onChange={(e) => setForm({ ...form, currentFitLevel: e.target.value })}
+          >
+            <option value="">Sin indicar</option>
+            {[1, 2, 3, 4, 5].map((x) => (
+              <option key={x} value={x}>
+                {x}/5
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          ¿Va con tu estilo actual?
+          <select
+            value={form.currentStyleMatch}
+            onChange={(e) => setForm({ ...form, currentStyleMatch: e.target.value })}
+          >
+            <option value="">Sin indicar</option>
+            {[1, 2, 3, 4, 5].map((x) => (
+              <option key={x} value={x}>
+                {x}/5
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          ¿Es cómoda?
+          <select
+            value={form.comfortLevel}
+            onChange={(e) => setForm({ ...form, comfortLevel: e.target.value })}
+          >
+            <option value="">Sin indicar</option>
+            {[1, 2, 3, 4, 5].map((x) => (
+              <option key={x} value={x}>
+                {x}/5
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          ¿La usas?
+          <select
+            value={form.estimatedPastUse}
+            onChange={(e) =>
+              setForm({ ...form, estimatedPastUse: e.target.value as EstimatedPastUse })
+            }
+          >
+            {Object.entries(estimatedUses).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          ¿La conservarías hoy?
+          <select
+            value={form.decisionStatus}
+            onChange={(e) =>
+              setForm({ ...form, decisionStatus: e.target.value as DecisionStatus })
+            }
+          >
+            {Object.entries(decisions).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="full">
+          Motivo de duda
+          <textarea
+            value={form.doubtReason}
+            onChange={(e) => setForm({ ...form, doubtReason: e.target.value })}
+            placeholder="Lo que te hace dudar ahora mismo."
+          />
+        </label>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button>Guardar revisión</Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function SpaceThumb({ space }: { space: Space }) {
@@ -2202,6 +3525,765 @@ function SpaceModal({
   );
 }
 
+function LocationManagerModal({
+  locations,
+  selectedId,
+  onSelect,
+  close,
+}: {
+  locations: WeatherLocation[];
+  selectedId?: string;
+  onSelect?: (id: string) => void;
+  close: () => void;
+}) {
+  const [query, setQuery] = useState(""),
+    [results, setResults] = useState<WeatherLocationSearchResult[]>([]),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+
+  async function runSearch() {
+    if (query.trim().length < 2) return;
+    setBusy(true);
+    setError("");
+    try {
+      setResults(await searchWeatherLocations(query));
+    } catch {
+      setError("No hemos podido buscar ubicaciones ahora mismo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveResult(
+    result: WeatherLocationSearchResult,
+    makeDefault = false,
+  ) {
+    const existing = locations.find(
+      (location) =>
+        Math.abs(location.latitude - result.latitude) < 0.01 &&
+        Math.abs(location.longitude - result.longitude) < 0.01,
+    );
+    const id = existing?.id || `weather-${uid()}`;
+    await db.weatherLocations.put({
+      id,
+      name: `${result.name}${result.admin1 ? `, ${result.admin1}` : ""}${result.countryCode ? ` (${result.countryCode})` : ""}`,
+      latitude: result.latitude,
+      longitude: result.longitude,
+      isDefault: existing?.isDefault || makeDefault || !locations.length,
+      createdAt: existing?.createdAt || now(),
+      updatedAt: now(),
+    });
+    if (makeDefault || !locations.some((location) => location.isDefault)) {
+      await setDefaultWeatherLocation(id);
+    }
+    onSelect?.(id);
+  }
+
+  async function removeLocation(location: WeatherLocation) {
+    if (locations.length === 1) {
+      alert("Necesitas al menos una ubicación guardada.");
+      return;
+    }
+    if (!confirm(`¿Eliminar “${location.name}”?`)) return;
+    const fallback = locations.find((entry) => entry.id !== location.id);
+    if (location.isDefault && fallback) {
+      await setDefaultWeatherLocation(fallback.id);
+      onSelect?.(fallback.id);
+    }
+    await softDeleteRecords("weatherLocations", [location.id]);
+  }
+
+  return (
+    <Modal title="Ubicaciones de clima" onClose={close} wide>
+      <div className="modal-form">
+        <label className="full">
+          Buscar ciudad o zona
+          <div className="inline-input">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Ej. Ponteareas, Vigo, Madrid..."
+            />
+            <Button type="button" onClick={runSearch} disabled={busy || query.trim().length < 2}>
+              <Search /> Buscar
+            </Button>
+          </div>
+        </label>
+        {error && <p className="form-error full">{error}</p>}
+        <div className="full">
+          <p className="field-label">Guardadas</p>
+          <div className="space-list">
+            {locations.map((location) => (
+              <div className="space-list-row" key={location.id}>
+                <div>
+                  <b>{location.name}</b>
+                  <small>
+                    {location.latitude.toFixed(3)}, {location.longitude.toFixed(3)}
+                  </small>
+                </div>
+                <div className="row">
+                  {location.isDefault ? (
+                    <span>Predeterminada</span>
+                  ) : (
+                    <button onClick={() => setDefaultWeatherLocation(location.id)}>
+                      Hacer predeterminada
+                    </button>
+                  )}
+                  {selectedId !== location.id && onSelect && (
+                    <button onClick={() => onSelect(location.id)}>Usar</button>
+                  )}
+                  <button onClick={() => removeLocation(location)}>Eliminar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {!!results.length && (
+          <div className="full">
+            <p className="field-label">Resultados</p>
+            <div className="space-list">
+              {results.map((result) => (
+                <div className="space-list-row" key={result.id}>
+                  <div>
+                    <b>
+                      {result.name}
+                      {result.admin1 ? `, ${result.admin1}` : ""}
+                    </b>
+                    <small>
+                      {result.countryCode || "—"} · {result.latitude.toFixed(3)},{" "}
+                      {result.longitude.toFixed(3)}
+                    </small>
+                  </div>
+                  <div className="row">
+                    <button onClick={() => saveResult(result, false)}>Guardar</button>
+                    <button onClick={() => saveResult(result, true)}>
+                      Guardar y usar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function RoutineModal({
+  routine,
+  close,
+}: {
+  routine?: UserRoutine;
+  close: () => void;
+}) {
+  const [form, setForm] = useState({
+    dayOfWeek: String(routine?.dayOfWeek ?? 1),
+    type: routine?.type || ("work" as UserRoutine["type"]),
+    startTime: routine?.startTime || "",
+    endTime: routine?.endTime || "",
+    notes: routine?.notes || "",
+  });
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const stamp = now();
+    await db.userRoutines.put({
+      id: routine?.id || uid(),
+      dayOfWeek: Number(form.dayOfWeek),
+      type: form.type,
+      startTime: form.startTime || undefined,
+      endTime: form.endTime || undefined,
+      notes: form.notes || undefined,
+      createdAt: routine?.createdAt || stamp,
+      updatedAt: stamp,
+    });
+    close();
+  }
+
+  async function remove() {
+    if (!routine || !confirm("¿Eliminar esta rutina?")) return;
+    await softDeleteRecords("userRoutines", [routine.id]);
+    close();
+  }
+
+  return (
+    <Modal title={routine ? "Editar rutina" : "Nueva rutina"} onClose={close}>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          Día
+          <select
+            value={form.dayOfWeek}
+            onChange={(e) => setForm({ ...form, dayOfWeek: e.target.value })}
+          >
+            {weekdayOrder.map((day) => (
+              <option key={day} value={day}>
+                {weekdayNames[day]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Tipo
+          <select
+            value={form.type}
+            onChange={(e) =>
+              setForm({ ...form, type: e.target.value as UserRoutine["type"] })
+            }
+          >
+            {Object.entries(routineTypes).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Empieza
+          <input
+            type="time"
+            value={form.startTime}
+            onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+          />
+        </label>
+        <label>
+          Termina
+          <input
+            type="time"
+            value={form.endTime}
+            onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+          />
+        </label>
+        <label className="full">
+          Notas
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="Algo útil para ese día."
+          />
+        </label>
+        <div className="modal-actions">
+          {routine && (
+            <Button type="button" variant="ghost" onClick={remove}>
+              Eliminar
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button>Guardar rutina</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EventModal({
+  event,
+  close,
+}: {
+  event?: WardrobeEvent;
+  close: () => void;
+}) {
+  const [form, setForm] = useState({
+    title: event?.title || "",
+    date: event?.date || today(),
+    startTime: event?.startTime || "",
+    endTime: event?.endTime || "",
+    type: event?.type || ("event" as WardrobeEvent["type"]),
+    dressCode: event?.dressCode || "",
+    locationName: event?.locationName || "",
+    latitude: event?.latitude?.toString() || "",
+    longitude: event?.longitude?.toString() || "",
+    notes: event?.notes || "",
+  });
+  const [query, setQuery] = useState(""),
+    [results, setResults] = useState<WeatherLocationSearchResult[]>([]);
+
+  async function searchPlace() {
+    if (query.trim().length < 2) return;
+    try {
+      setResults(await searchWeatherLocations(query));
+    } catch {
+      setResults([]);
+    }
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!form.title.trim()) return;
+    const stamp = now();
+    await db.wardrobeEvents.put({
+      id: event?.id || uid(),
+      title: form.title.trim(),
+      date: form.date,
+      startTime: form.startTime || undefined,
+      endTime: form.endTime || undefined,
+      type: form.type,
+      dressCode: form.dressCode
+        ? (form.dressCode as NonNullable<WardrobeEvent["dressCode"]>)
+        : undefined,
+      locationName: form.locationName || undefined,
+      latitude: form.latitude ? +form.latitude : undefined,
+      longitude: form.longitude ? +form.longitude : undefined,
+      notes: form.notes || undefined,
+      createdAt: event?.createdAt || stamp,
+      updatedAt: stamp,
+    });
+    close();
+  }
+
+  async function remove() {
+    if (!event || !confirm("¿Eliminar este evento?")) return;
+    await softDeleteRecords("wardrobeEvents", [event.id]);
+    close();
+  }
+
+  return (
+    <Modal title={event ? "Editar evento" : "Nuevo evento"} onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <label>
+          Título *
+          <input
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            placeholder="Ej. Cena con amigas"
+            required
+          />
+        </label>
+        <label>
+          Fecha
+          <input
+            type="date"
+            value={form.date}
+            onChange={(e) => setForm({ ...form, date: e.target.value })}
+            required
+          />
+        </label>
+        <label>
+          Empieza
+          <input
+            type="time"
+            value={form.startTime}
+            onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+          />
+        </label>
+        <label>
+          Termina
+          <input
+            type="time"
+            value={form.endTime}
+            onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+          />
+        </label>
+        <label>
+          Tipo de plan
+          <select
+            value={form.type}
+            onChange={(e) =>
+              setForm({ ...form, type: e.target.value as WardrobeEvent["type"] })
+            }
+          >
+            {Object.entries(eventTypes).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Dress code
+          <select
+            value={form.dressCode}
+            onChange={(e) => setForm({ ...form, dressCode: e.target.value })}
+          >
+            <option value="">Sin indicar</option>
+            {Object.entries(dressCodeLabels).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="full">
+          Ubicación
+          <input
+            value={form.locationName}
+            onChange={(e) => setForm({ ...form, locationName: e.target.value })}
+            placeholder="Ej. Vigo centro"
+          />
+        </label>
+        <label className="full">
+          Buscar ubicación opcional
+          <div className="inline-input">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar para guardar coordenadas"
+            />
+            <Button type="button" variant="secondary" onClick={searchPlace}>
+              <Search /> Buscar
+            </Button>
+          </div>
+        </label>
+        {!!results.length && (
+          <div className="full space-list">
+            {results.slice(0, 4).map((result) => (
+              <button
+                type="button"
+                className="space-list-row"
+                key={result.id}
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    locationName: `${result.name}${result.admin1 ? `, ${result.admin1}` : ""}`,
+                    latitude: String(result.latitude),
+                    longitude: String(result.longitude),
+                  })
+                }
+              >
+                <div>
+                  <b>{result.name}</b>
+                  <small>
+                    {result.admin1 || result.countryCode || "—"} ·{" "}
+                    {result.latitude.toFixed(3)}, {result.longitude.toFixed(3)}
+                  </small>
+                </div>
+                <span>Usar</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <label className="full">
+          Notas
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="Algo importante para vestirte mejor ese día."
+          />
+        </label>
+        <div className="modal-actions">
+          {event && (
+            <Button type="button" variant="ghost" onClick={remove}>
+              Eliminar
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button>Guardar evento</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function RecommendationCard({
+  recommendation,
+  onRefresh,
+  onSave,
+  onWear,
+}: {
+  recommendation: RecommendedLook;
+  onRefresh: () => void;
+  onSave: () => void;
+  onWear: () => void;
+}) {
+  return (
+    <article className="context-card">
+      <header>
+        <div>
+          <p className="eyebrow">
+            {dayLabel(recommendation.context.date)} · {recommendation.context.moment.toUpperCase()}
+          </p>
+          <h3>{recommendation.context.title}</h3>
+          <small>{recommendation.context.subtitle}</small>
+        </div>
+        <span className="confidence">
+          {recommendation.source === "outfit" ? "Outfit" : "Look"}
+        </span>
+      </header>
+      <p className="context-weather">{recommendation.weatherLine}</p>
+      <div className="recommendation-strip">
+        {recommendation.items.map((item) => (
+          <NavLink to={`/prenda/${item.id}`} key={item.id}>
+            <ItemThumb item={item} />
+            <span>{item.name}</span>
+          </NavLink>
+        ))}
+      </div>
+      <div className="context-reasons">
+        {recommendation.reasons.slice(0, 2).map((reason) => (
+          <p key={reason}>{reason}</p>
+        ))}
+      </div>
+      <div className="context-actions">
+        <button onClick={onSave}>Guardar como outfit</button>
+        <button onClick={onWear}>Marcar como usado</button>
+        <button onClick={onRefresh}>Cambiar una prenda</button>
+      </div>
+    </article>
+  );
+}
+
+function WhatToWearPage() {
+  const d = useData();
+  const [locationId, setLocationId] = useState(getDefaultWeatherLocation(d.weatherLocations).id),
+    [refreshing, setRefreshing] = useState(false),
+    [error, setError] = useState(""),
+    [locationOpen, setLocationOpen] = useState(false),
+    [eventOpen, setEventOpen] = useState(false),
+    [editingEvent, setEditingEvent] = useState<WardrobeEvent | undefined>(),
+    [variants, setVariants] = useState<Record<string, number>>({});
+  const location =
+    d.weatherLocations.find((entry) => entry.id === locationId) ||
+    getDefaultWeatherLocation(d.weatherLocations);
+  const locationOptions = d.weatherLocations.length ? d.weatherLocations : [location];
+  const forecast = cachedForecast(d.weatherCache, location.id, 4);
+  const days = nextDates(4).map((date) => ({
+    date,
+    weather: forecast.find((entry) => entry.date === date),
+    contexts: contextsForDate(date, d),
+  }));
+  const upcomingEvents = [...d.wardrobeEvents]
+    .filter((event) => event.date >= today())
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        (a.startTime || "12:00").localeCompare(b.startTime || "12:00"),
+    )
+    .slice(0, 6);
+
+  useEffect(() => {
+    if (!d.weatherLocations.find((entry) => entry.id === locationId)) {
+      setLocationId(getDefaultWeatherLocation(d.weatherLocations).id);
+    }
+  }, [d.weatherLocations, locationId]);
+
+  useEffect(() => {
+    if (!location?.id || !weatherNeedsRefresh(d.weatherCache, location.id, 4)) return;
+    setRefreshing(true);
+    setError("");
+    refreshWeather(location, 5)
+      .catch(() => setError("No hemos podido actualizar el clima ahora mismo."))
+      .finally(() => setRefreshing(false));
+  }, [d.weatherCache, location]);
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    setError("");
+    try {
+      await refreshWeather(location, 5);
+    } catch {
+      setError("No hemos podido actualizar el clima ahora mismo.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function saveRecommendation(recommendation: RecommendedLook) {
+    const stamp = now();
+    await db.outfits.add({
+      id: uid(),
+      name: `${dayLabel(recommendation.context.date)} · ${recommendation.context.title}`,
+      clothingItemIds: recommendation.items.map((item) => item.id),
+      occasion: recommendation.context.title,
+      season: [
+        ...new Set(recommendation.items.flatMap((item) => item.season || [])),
+      ],
+      notes: recommendation.reasons.join(" "),
+      favorite: false,
+      createdAt: stamp,
+      updatedAt: stamp,
+    });
+  }
+
+  async function markRecommendationUsed(recommendation: RecommendedLook) {
+    await db.wearLogs.add({
+      id: uid(),
+      clothingItemIds: recommendation.items.map((item) => item.id),
+      outfitId: recommendation.outfitId,
+      date: recommendation.context.date,
+      notes: `Recomendación: ${recommendation.context.title}`,
+    });
+  }
+
+  return (
+    <>
+      <PageHead eyebrow="CLIMA + AGENDA + ARMARIO" title="Qué ponerme">
+        <div className="actions">
+          <Button variant="secondary" onClick={() => setLocationOpen(true)}>
+            <MapPin /> Ubicaciones
+          </Button>
+          <Button variant="secondary" onClick={() => {
+            setEditingEvent(undefined);
+            setEventOpen(true);
+          }}>
+            <Plus /> Nuevo evento
+          </Button>
+          <Button onClick={manualRefresh} disabled={refreshing}>
+            <RefreshCw /> {refreshing ? "Actualizando..." : "Actualizar clima"}
+          </Button>
+        </div>
+      </PageHead>
+      <section className="panel context-hero">
+        <div>
+          <p className="eyebrow">UBICACIÓN ACTIVA</p>
+          <h2>{location.name}</h2>
+          <p className="muted">
+            {forecast[0]
+              ? `${forecast[0].description} · ${Math.round(forecast[0].temperatureMin)}–${Math.round(forecast[0].temperatureMax)}°C`
+              : "En cuanto tengamos clima descargado afinaremos mejor las recomendaciones."}
+          </p>
+        </div>
+        <div className="inline-input">
+          <select value={location.id} onChange={(e) => setLocationId(e.target.value)}>
+            {locationOptions.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+      {error && <p className="form-error">{error}</p>}
+      <div className="context-day-stack">
+        {days.map((day) => (
+          <section className="panel" key={day.date}>
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">{dayLabel(day.date).toUpperCase()}</p>
+                <h2>{dateFmt(day.date)}</h2>
+              </div>
+              <small className="muted" style={{ margin: 0 }}>
+                {day.weather
+                  ? `${day.weather.description} · ${Math.round(day.weather.temperatureMin)}–${Math.round(day.weather.temperatureMax)}°C`
+                  : "Sin clima descargado"}
+              </small>
+            </div>
+            <div className="recommendation-grid">
+              {day.contexts
+                .map((context) =>
+                  buildRecommendation(
+                    d,
+                    context,
+                    day.weather,
+                    variants[context.id] || 0,
+                  ),
+                )
+                .filter(Boolean)
+                .map((recommendation) => (
+                  <RecommendationCard
+                    key={recommendation!.id}
+                    recommendation={recommendation!}
+                    onRefresh={() =>
+                      setVariants((current) => ({
+                        ...current,
+                        [recommendation!.id]: (current[recommendation!.id] || 0) + 1,
+                      }))
+                    }
+                    onSave={() => saveRecommendation(recommendation!)}
+                    onWear={() => markRecommendationUsed(recommendation!)}
+                  />
+                ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      <div className="two-col">
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">PRÓXIMOS EVENTOS</p>
+              <h2>Tu calendario interno</h2>
+            </div>
+            <button
+              className="icon-btn"
+              onClick={() => {
+                setEditingEvent(undefined);
+                setEventOpen(true);
+              }}
+            >
+              <Plus />
+            </button>
+          </div>
+          {upcomingEvents.length ? (
+            <div className="space-list">
+              {upcomingEvents.map((event) => (
+                <div className="space-list-row" key={event.id}>
+                  <div>
+                    <b>{event.title}</b>
+                    <small>
+                      {dateFmt(event.date)} · {eventSummary(event)}
+                      {event.dressCode ? ` · ${dressCodeLabels[event.dressCode]}` : ""}
+                    </small>
+                  </div>
+                  <div className="row">
+                    <button
+                      onClick={() => {
+                        setEditingEvent(event);
+                        setEventOpen(true);
+                      }}
+                    >
+                      Editar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty
+              title="Todavía no hay eventos"
+              text="Añade cenas, trabajo, fiestas o planes para que el recomendador entienda mejor el contexto."
+              action={<Button onClick={() => setEventOpen(true)}>Crear primer evento</Button>}
+            />
+          )}
+        </section>
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">RUTINA SEMANAL</p>
+              <h2>Qué días trabajas y cómo se reparte tu semana</h2>
+            </div>
+            <NavLink to="/ajustes">Editar en Ajustes</NavLink>
+          </div>
+          <div className="routine-list">
+            {weekdayOrder.map((day) => {
+              const routine = d.userRoutines.find((entry) => entry.dayOfWeek === day);
+              return (
+                <div className="routine-row" key={day}>
+                  <b>{weekdayNames[day]}</b>
+                  <span>{routineSummary(routine)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+      {locationOpen && (
+        <LocationManagerModal
+          locations={locationOptions}
+          selectedId={location.id}
+          onSelect={(id) => {
+            setLocationId(id);
+            setLocationOpen(false);
+          }}
+          close={() => setLocationOpen(false)}
+        />
+      )}
+      {eventOpen && (
+        <EventModal
+          event={editingEvent}
+          close={() => {
+            setEventOpen(false);
+            setEditingEvent(undefined);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 function Outfits() {
   const d = useData(),
     n = useNavigate(),
@@ -2597,6 +4679,205 @@ function Decisions() {
           <NavLink to="/armario">Explorar armario</NavLink>
         </div>
       )}
+    </>
+  );
+}
+
+function SmartReviewPage() {
+  const d = useData(),
+    smart = buildSmartInsights(d);
+  async function applyAction(
+    ids: string[] | undefined,
+    action: DecisionStatus | "review_later" | undefined,
+  ) {
+    if (!ids?.length || !action) return;
+    if (action === "review_later") {
+      await db.clothingItems.bulkUpdate(
+        ids.map((id) => ({
+          key: id,
+          changes: {
+            decisionStatus: "maybe",
+            tags: Array.from(
+              new Set([
+                ...(d.items.find((item) => item.id === id)?.tags || []),
+                "revisar",
+              ]),
+            ),
+            updatedAt: now(),
+          },
+        })),
+      );
+      return;
+    }
+    await db.clothingItems.bulkUpdate(
+      ids.map((id) => ({
+        key: id,
+        changes: {
+          decisionStatus: action,
+          updatedAt: now(),
+        },
+      })),
+    );
+  }
+  const wishlistAdvice = d.wishlist
+    .filter((wish) => wish.status === "pending")
+    .map((wish) => ({
+      wish,
+      advice: wishlistAdviceText(wish, d),
+    }));
+  return (
+    <>
+      <PageHead
+        eyebrow={`${smart.insights.length} INSIGHTS LOCALES`}
+        title="Revisión inteligente"
+      >
+        <Button variant="secondary" onClick={() => window.location.hash = "#/armario"}>
+          <Shirt /> Ver armario
+        </Button>
+      </PageHead>
+      <div className="utility-links">
+        <NavLink to="/wishlist">
+          <Heart /> Wishlist inteligente
+        </NavLink>
+        <NavLink to="/decisiones">
+          <Archive /> Decisiones
+        </NavLink>
+      </div>
+      {smart.insights.length ? (
+        <div className="insight-grid">
+          {smart.insights.map((insight) => (
+            <section className="panel insight-card" key={insight.id}>
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">{insight.kind.toUpperCase()}</p>
+                  <h2>{insight.title}</h2>
+                </div>
+                <span className={`confidence ${insight.confidence}`}>
+                  {insight.confidence}
+                </span>
+              </div>
+              <p className="muted">{insight.explanation}</p>
+              {insight.itemIds?.length ? (
+                <div className="mini-items">
+                  {insight.itemIds.slice(0, 4).map((id) => {
+                    const item = d.items.find((entry) => entry.id === id);
+                    return item ? (
+                      <NavLink to={`/prenda/${item.id}`} key={item.id}>
+                        <ItemThumb item={item} />
+                        <span>
+                          {item.name}
+                          <small>
+                            {decisions[item.decisionStatus]} · {item.category}
+                          </small>
+                        </span>
+                      </NavLink>
+                    ) : null;
+                  })}
+                </div>
+              ) : null}
+              <div className="resale-actions">
+                {insight.action && (
+                  <button onClick={() => applyAction(insight.itemIds, insight.action)}>
+                    {insight.action === "sell"
+                      ? "Marcar para vender"
+                      : insight.action === "donate"
+                        ? "Marcar para donar"
+                        : insight.action === "keep"
+                          ? "Conservar"
+                          : "Revisar después"}
+                  </button>
+                )}
+                {insight.itemIds?.[0] && (
+                  <button
+                    onClick={() =>
+                      (window.location.hash = `#/prenda/${insight.itemIds?.[0]}`)
+                    }
+                  >
+                    Abrir prenda
+                  </button>
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <Empty
+          title="Aún faltan señales para afinar"
+          text="Cuando empieces a revisar prendas y registrar algo más de contexto, aparecerán aquí sugerencias útiles."
+        />
+      )}
+      <div className="two-col">
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">CATEGORÍAS</p>
+              <h2>Dónde merece la pena mirar</h2>
+            </div>
+          </div>
+          <div className="space-list">
+            {Array.from(
+              new Set(
+                d.items.filter((item) => !item.isArchived).map((item) => item.category),
+              ),
+            )
+              .slice(0, 8)
+              .map((category) => {
+                const items = d.items.filter(
+                  (item) => !item.isArchived && item.category === category,
+                );
+                const uses = d.wears.filter((wear) =>
+                  wear.clothingItemIds.some(
+                    (id) => d.items.find((item) => item.id === id)?.category === category,
+                  ),
+                ).length;
+                const lowRated = items.filter(
+                  (item) =>
+                    average([
+                      item.currentLoveLevel || 0,
+                      item.currentFitLevel || 0,
+                      item.currentStyleMatch || 0,
+                    ]) <= 2 && item.currentLoveLevel,
+                ).length;
+                return (
+                  <div className="space-list-row" key={category}>
+                    <div>
+                      <b>{category}</b>
+                      <small>
+                        {items.length} prendas · {uses} usos recientes · {lowRated} con valoración baja
+                      </small>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </section>
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">WISHLIST INTELIGENTE</p>
+              <h2>Comprar mejor, con más contexto</h2>
+            </div>
+          </div>
+          {wishlistAdvice.length ? (
+            <div className="space-list">
+              {wishlistAdvice.map(({ wish, advice }) => (
+                <div className="space-list-row" key={wish.id}>
+                  <div>
+                    <b>{wish.name}</b>
+                    <small>{advice.text}</small>
+                  </div>
+                  <span>{advice.advice}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty
+              title="Tu wishlist está tranquila"
+              text="Cuando añadas deseos, aquí aparecerá contexto para comprar con más criterio."
+            />
+          )}
+        </section>
+      </div>
     </>
   );
 }
@@ -3994,10 +6275,29 @@ function SettingsPage() {
     [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
     [authMode, setAuthMode] = useState<"login" | "signup">("login"),
-    [syncBusy, setSyncBusy] = useState(false);
+    [syncBusy, setSyncBusy] = useState(false),
+    [locationOpen, setLocationOpen] = useState(false),
+    [routineOpen, setRoutineOpen] = useState(false),
+    [editingRoutine, setEditingRoutine] = useState<UserRoutine | undefined>();
   async function saveBudget() {
     await db.settings.update("main", {
       monthlyClothingBudget: budget ? +budget : undefined,
+    });
+  }
+  async function savePreferenceTags(
+    key:
+      | "preferredWorkTags"
+      | "preferredWeekendTags"
+      | "preferredNightTags"
+      | "preferredEventTags",
+    raw: string,
+  ) {
+    await db.settings.put({
+      ...d.settings,
+      [key]: raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
     });
   }
   async function runSyncTask(task: () => Promise<void>) {
@@ -4014,7 +6314,7 @@ function SettingsPage() {
   }
   async function exportData() {
     const data = {
-        version: 3,
+        version: 4,
         exportedAt: now(),
         clothingItems: d.items,
         wearLogs: d.wears,
@@ -4026,6 +6326,9 @@ function SettingsPage() {
         wishlistItems: d.wishlist,
         spaces: d.spaces,
         resaleListings: d.resaleListings,
+        weatherLocations: d.weatherLocations,
+        userRoutines: d.userRoutines,
+        wardrobeEvents: d.wardrobeEvents,
       },
       blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -4058,6 +6361,9 @@ function SettingsPage() {
         await db.wishlistItems.bulkAdd(x.wishlistItems || []);
         await db.spaces.bulkAdd(x.spaces || []);
         await db.resaleListings.bulkAdd(x.resaleListings || []);
+        await db.weatherLocations.bulkAdd(x.weatherLocations || []);
+        await db.userRoutines.bulkAdd(x.userRoutines || []);
+        await db.wardrobeEvents.bulkAdd(x.wardrobeEvents || []);
         await db.settings.put({ ...defaults, ...x.settings, id: "main" });
         await db.syncState.put(syncDefaults);
       });
@@ -4108,6 +6414,96 @@ function SettingsPage() {
             />
             <span /> Mostrar el objetivo “si algo entra, algo sale”
           </label>
+        </section>
+        <section className="panel">
+          <h2>Clima y contexto</h2>
+          <p className="muted">
+            La app usa Open-Meteo y sigue funcionando aunque no haya conexión.
+          </p>
+          <div className="sync-status">
+            <div className="sync-row">
+              <b>Ubicación predeterminada</b>
+              <span>{getDefaultWeatherLocation(d.weatherLocations).name}</span>
+            </div>
+            <div className="sync-row">
+              <b>Ubicaciones frecuentes</b>
+              <span>{d.weatherLocations.length}</span>
+            </div>
+          </div>
+          <Button variant="secondary" onClick={() => setLocationOpen(true)}>
+            <MapPin /> Gestionar ubicaciones
+          </Button>
+          <div className="settings-preferences">
+            <label>
+              Etiquetas preferidas para trabajo
+              <input
+                defaultValue={(d.settings.preferredWorkTags || []).join(", ")}
+                onBlur={(e) => savePreferenceTags("preferredWorkTags", e.target.value)}
+                placeholder="trabajo, oficina, cómodo..."
+              />
+            </label>
+            <label>
+              Preferencias para finde
+              <input
+                defaultValue={(d.settings.preferredWeekendTags || []).join(", ")}
+                onBlur={(e) => savePreferenceTags("preferredWeekendTags", e.target.value)}
+                placeholder="casual, relajado, cómodo..."
+              />
+            </label>
+            <label>
+              Preferencias para noche
+              <input
+                defaultValue={(d.settings.preferredNightTags || []).join(", ")}
+                onBlur={(e) => savePreferenceTags("preferredNightTags", e.target.value)}
+                placeholder="noche, favorito, arreglado..."
+              />
+            </label>
+            <label>
+              Preferencias para eventos
+              <input
+                defaultValue={(d.settings.preferredEventTags || []).join(", ")}
+                onBlur={(e) => savePreferenceTags("preferredEventTags", e.target.value)}
+                placeholder="evento, especial, formal..."
+              />
+            </label>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <h2>Rutina semanal</h2>
+              <p className="muted">
+                Define trabajo, estudio o días libres con horario si te ayuda.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setEditingRoutine(undefined);
+                setRoutineOpen(true);
+              }}
+            >
+              <Plus /> Nueva rutina
+            </Button>
+          </div>
+          <div className="routine-list">
+            {weekdayOrder.map((day) => {
+              const routine = d.userRoutines.find((entry) => entry.dayOfWeek === day);
+              return (
+                <button
+                  className="routine-row"
+                  key={day}
+                  onClick={() => {
+                    setEditingRoutine(routine);
+                    setRoutineOpen(true);
+                  }}
+                >
+                  <b>{weekdayNames[day]}</b>
+                  <span>{routineSummary(routine)}</span>
+                </button>
+              );
+            })}
+          </div>
         </section>
         <section className="panel">
           <h2>Tus datos</h2>
@@ -4291,6 +6687,22 @@ function SettingsPage() {
           </small>
         </section>
       </div>
+      {locationOpen && (
+        <LocationManagerModal
+          locations={d.weatherLocations.length ? d.weatherLocations : [defaultWeatherLocation]}
+          selectedId={getDefaultWeatherLocation(d.weatherLocations).id}
+          close={() => setLocationOpen(false)}
+        />
+      )}
+      {routineOpen && (
+        <RoutineModal
+          routine={editingRoutine}
+          close={() => {
+            setRoutineOpen(false);
+            setEditingRoutine(undefined);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -4932,6 +7344,7 @@ function Wishlist() {
                 (!w.colors?.length ||
                   w.colors.some((c) => i.colors.includes(c))),
             );
+            const advice = wishlistAdviceText(w, d);
             return (
               <article key={w.id}>
                 <div className={`priority ${w.priority}`}>
@@ -4955,6 +7368,7 @@ function Wishlist() {
                 <small>
                   Ya tienes {similar.length} prendas parecidas en tu armario.
                 </small>
+                <blockquote>{advice.text}</blockquote>
                 <div className="row">
                   <Button variant="secondary" onClick={() => setOpen(w)}>
                     <Pencil /> Editar
@@ -5025,13 +7439,24 @@ function WishlistModal({
     colors: item?.colors || ([] as string[]),
     store: item?.store || "",
     estimatedPrice: item?.estimatedPrice ?? "",
+    maxPrice: item?.maxPrice ?? "",
+    plannedUse: item?.plannedUse || "",
+    waitForSale: item?.waitForSale || false,
+    targetSeason: item?.targetSeason || ([] as string[]),
     priority: item?.priority || "medium",
     reason: item?.reason || "",
   });
+  const toggleSeason = (value: string) =>
+    setForm((current) => ({
+      ...current,
+      targetSeason: current.targetSeason.includes(value)
+        ? current.targetSeason.filter((x) => x !== value)
+        : [...current.targetSeason, value],
+    }));
   async function save(e: FormEvent) {
     e.preventDefault();
     const t = now();
-    await db.wishlistItems.put({
+    const base = {
       id: item?.id || uid(),
       name: form.name,
       category: form.category || undefined,
@@ -5039,11 +7464,21 @@ function WishlistModal({
       store: form.store || undefined,
       estimatedPrice:
         form.estimatedPrice === "" ? undefined : +form.estimatedPrice,
+      maxPrice: form.maxPrice === "" ? undefined : +form.maxPrice,
+      targetSeason: form.targetSeason.length ? form.targetSeason : undefined,
+      plannedUse: form.plannedUse || undefined,
+      waitForSale: form.waitForSale,
       priority: form.priority as WishlistItem["priority"],
       reason: form.reason || undefined,
       status: item?.status || "pending",
       createdAt: item?.createdAt || t,
       updatedAt: t,
+    } as WishlistItem;
+    const advice = wishlistAdviceText(base, data);
+    await db.wishlistItems.put({
+      ...base,
+      purchaseAdvice: advice.advice,
+      similarItemIds: advice.relatedItemIds,
     });
     close();
   }
@@ -5090,6 +7525,15 @@ function WishlistModal({
           />
         </label>
         <label>
+          Precio máximo (€)
+          <input
+            min="0"
+            type="number"
+            value={form.maxPrice}
+            onChange={(e) => setForm({ ...form, maxPrice: e.target.value })}
+          />
+        </label>
+        <label>
           Prioridad
           <select
             value={form.priority}
@@ -5101,6 +7545,40 @@ function WishlistModal({
             <option value="medium">Media</option>
             <option value="high">Alta</option>
           </select>
+        </label>
+        <label className="full">
+          Uso previsto
+          <input
+            value={form.plannedUse}
+            onChange={(e) => setForm({ ...form, plannedUse: e.target.value })}
+            placeholder="Ej. oficina, viaje, diario..."
+          />
+        </label>
+        <div className="full">
+          <span className="field-label">Temporada objetivo</span>
+          <div className="chips">
+            {data.settings.seasons.map((season) => (
+              <button
+                type="button"
+                className={form.targetSeason.includes(season) ? "selected" : ""}
+                onClick={() => toggleSeason(season)}
+                key={season}
+              >
+                {season}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={form.waitForSale}
+            onChange={(e) =>
+              setForm({ ...form, waitForSale: e.target.checked })
+            }
+          />
+          <span />
+          Prefiero esperar a rebajas si conviene
         </label>
         <label className="full">
           Por qué lo quieres

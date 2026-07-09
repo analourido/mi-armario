@@ -132,13 +132,48 @@ html,body{overflow-x:hidden}
 .resale-actions{display:flex;flex-wrap:wrap;gap:6px}
 .resale-actions button{border:1px solid var(--border);border-radius:14px;background:#fff;padding:6px 8px;font-size:8px}
 .resale-actions.secondary button{color:var(--muted)}
+.insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.insight-card{display:grid;gap:10px}
+.confidence{display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:28px;padding:0 10px;border-radius:999px;background:#f4f4f2;font-size:9px;font-weight:700;text-transform:capitalize}
+.confidence.alto{background:#eef5ef;color:#355b41}
+.confidence.medio{background:#f4f1e8;color:#7a623d}
+.confidence.bajo{background:#f1f1ef;color:#5b5b5b}
+.settings-preferences{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.routine-list{display:grid;gap:8px}
+.routine-row{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;border:1px solid var(--border-soft);border-radius:14px;background:#fff;padding:12px 14px;text-align:left}
+.routine-row b,.routine-row span{font-size:10px}
+.routine-row span{color:var(--muted)}
+.context-hero{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px}
+.context-hero h2{margin:5px 0 0;font-size:28px;letter-spacing:-.045em}
+.context-day-stack{display:grid;gap:12px}
+.recommendation-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.context-card{display:grid;gap:12px;padding:14px;border:1px solid var(--border-soft);border-radius:18px;background:#fff}
+.context-card h3{margin:4px 0;font-size:17px;letter-spacing:-.03em}
+.context-card header small{display:block;color:var(--muted);font-size:9px;line-height:1.45}
+.context-weather{margin:0;color:#404040;font-size:10px}
+.recommendation-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.recommendation-strip a{min-width:0}
+.recommendation-strip img,.recommendation-strip .placeholder{width:100%;aspect-ratio:4/5;border-radius:12px;background:var(--surface-2);object-fit:contain}
+.recommendation-strip span{display:block;overflow:hidden;margin-top:5px;font-size:8px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+.context-reasons{display:grid;gap:7px}
+.context-reasons p{margin:0;color:var(--muted);font-size:9px;line-height:1.55}
+.context-actions{display:flex;flex-wrap:wrap;gap:6px}
+.context-actions button{border:1px solid var(--border);border-radius:14px;background:#fff;padding:7px 9px;font-size:8px}
 
 @media(max-width:1200px){
   .resale-board{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .recommendation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media(max-width:760px){
+  .settings-preferences{grid-template-columns:1fr}
+  .insight-grid{grid-template-columns:1fr}
   .resale-board{display:block}
   .resale-column{display:none;margin-top:10px}
   .resale-column.active{display:block}
+  .context-hero{display:block}
+  .context-hero .inline-input{margin-top:12px}
+  .recommendation-grid{grid-template-columns:1fr}
+  .context-actions button{flex:1 1 calc(50% - 6px)}
+  .routine-row{align-items:flex-start;flex-direction:column}
 }
