@@ -35,10 +35,15 @@ function services() {
   return { auth, firestore, storage, persistenceReady };
 }
 
-const imageFields: Partial<Record<SyncableCollection, "image" | "photo">> = {
-  clothingItems: "image",
-  outfits: "image",
-  spaces: "photo",
+const singleImageFields: Partial<
+  Record<SyncableCollection, Array<"image" | "photo" | "wornPhoto">>
+> = {
+  clothingItems: ["image"],
+  outfits: ["image", "wornPhoto"],
+  spaces: ["photo"],
+};
+const arrayImageFields: Partial<Record<SyncableCollection, Array<"wornPhotos">>> = {
+  outfits: ["wornPhotos"],
 };
 function tableFor(name: SyncableCollection) {
   switch (name) {
@@ -101,25 +106,48 @@ async function uploadImageIfNeeded(
   record: Record<string, unknown>,
   storage = services().storage,
 ) {
-  const field = imageFields[collectionName];
-  if (!field) return record;
-  const imageValue = typeof record[field] === "string" ? record[field] : "";
+  const fields = singleImageFields[collectionName] || [];
+  const arrayFields = arrayImageFields[collectionName] || [];
+  if (!fields.length && !arrayFields.length) return record;
   const imageUpdatedAt =
     typeof record.imageUpdatedAt === "string" ? record.imageUpdatedAt : undefined;
   const lastSyncedAt =
     typeof record.lastSyncedAt === "string" ? record.lastSyncedAt : undefined;
-  if (!imageValue || !imageValue.startsWith("data:")) return record;
-  if (imageUpdatedAt && lastSyncedAt && imageUpdatedAt <= lastSyncedAt && record.imageUrl)
+  if (imageUpdatedAt && lastSyncedAt && imageUpdatedAt <= lastSyncedAt)
     return record;
-  const assetRef = ref(storage, `users/${userId}/${collectionName}/${record.id}/original`);
-  await uploadString(assetRef, imageValue, "data_url");
-  const downloadURL = await getDownloadURL(assetRef);
-  return {
-    ...record,
-    [field]: downloadURL,
-    imageUrl: downloadURL,
-    thumbnailUrl: downloadURL,
-  };
+  let prepared = { ...record };
+  for (const field of fields) {
+    const imageValue = typeof prepared[field] === "string" ? prepared[field] : "";
+    if (!imageValue.startsWith("data:")) continue;
+    const assetRef = ref(storage, `users/${userId}/${collectionName}/${record.id}/${field}`);
+    await uploadString(assetRef, imageValue, "data_url");
+    const downloadURL = await getDownloadURL(assetRef);
+    prepared = {
+      ...prepared,
+      [field]: downloadURL,
+      ...(field === "image" || field === "photo"
+        ? { imageUrl: downloadURL, thumbnailUrl: downloadURL }
+        : {}),
+    };
+  }
+  for (const field of arrayFields) {
+    const values = Array.isArray(prepared[field]) ? (prepared[field] as unknown[]) : [];
+    if (!values.some((value) => typeof value === "string" && value.startsWith("data:")))
+      continue;
+    const uploaded = await Promise.all(
+      values.map(async (value, index) => {
+        if (typeof value !== "string" || !value.startsWith("data:")) return value;
+        const assetRef = ref(
+          storage,
+          `users/${userId}/${collectionName}/${record.id}/${field}/${index}`,
+        );
+        await uploadString(assetRef, value, "data_url");
+        return getDownloadURL(assetRef);
+      }),
+    );
+    prepared = { ...prepared, [field]: uploaded };
+  }
+  return prepared;
 }
 
 function remotePayload(
@@ -140,13 +168,31 @@ function applyRemoteImages(
   remote: Record<string, unknown>,
   local?: Record<string, unknown>,
 ) {
-  const field = imageFields[collectionName];
-  if (!field) return remote;
-  const display = (local?.[field] as string | undefined) || (remote[field] as string | undefined) || (remote.imageUrl as string | undefined);
-  return {
-    ...remote,
-    [field]: display,
-  };
+  const fields = singleImageFields[collectionName] || [];
+  const arrayFields = arrayImageFields[collectionName] || [];
+  if (!fields.length && !arrayFields.length) return remote;
+  let merged = { ...remote };
+  for (const field of fields) {
+    const localImage = local?.[field] as string | undefined;
+    const remoteImage = remote[field] as string | undefined;
+    merged = {
+      ...merged,
+      [field]:
+        localImage?.startsWith("data:")
+          ? localImage
+          : remoteImage || (remote.imageUrl as string | undefined),
+    };
+  }
+  for (const field of arrayFields) {
+    const localImages = Array.isArray(local?.[field]) ? (local?.[field] as string[]) : [];
+    merged = {
+      ...merged,
+      [field]: localImages.some((value) => value.startsWith("data:"))
+        ? localImages
+        : remote[field],
+    };
+  }
+  return merged;
 }
 
 async function pushPendingRecords(userId: string) {

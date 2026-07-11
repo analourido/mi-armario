@@ -103,6 +103,12 @@ export interface Outfit extends SyncMeta, ImageSyncMeta {
   season: string[];
   notes?: string;
   image?: string;
+  wornPhoto?: string;
+  wornPhotos?: string[];
+  fitRating?: 1 | 2 | 3 | 4 | 5;
+  confidenceRating?: 1 | 2 | 3 | 4 | 5;
+  lastWornAt?: string;
+  notesAfterWearing?: string;
   favorite: boolean;
   createdAt: string;
   updatedAt: string;

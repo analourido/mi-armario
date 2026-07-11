@@ -648,6 +648,12 @@ async function compressImage(file?: File) {
   return canvas.toDataURL("image/jpeg", 0.78);
 }
 
+async function compressImages(files?: FileList | File[]) {
+  const list = Array.from(files || []);
+  const images = await Promise.all(list.map((file) => compressImage(file)));
+  return images.filter(Boolean) as string[];
+}
+
 function spaceMap(spaces: Space[]) {
   return new Map(spaces.map((space) => [space.id, space]));
 }
@@ -784,7 +790,7 @@ async function deleteSpaceBranch(space: Space, data: Data) {
     );
   const confirmText = `¿Eliminar “${space.name}”${branchIds.length > 1 ? ` y ${branchIds.length - 1} subespacios` : ""}? ${affectedItems.length ? `Las ${affectedItems.length} prendas afectadas se quedarán sin ubicación.` : "No se borrará ninguna prenda."}`;
   if (!confirm(confirmText)) return;
-  await db.transaction("rw", [db.spaces, db.clothingItems], async () => {
+  await db.transaction("rw", [db.spaces, db.clothingItems, db.syncDeletes], async () => {
     if (affectedItems.length) {
       await db.clothingItems.bulkUpdate(
         affectedItems.map((item) => ({
@@ -1635,19 +1641,43 @@ function App() {
 const nav = [
   ["/", Home, "Inicio"],
   ["/armario", Shirt, "Armario"],
-  ["/que-ponerme", Cloud, "Qué ponerme"],
-  ["/viajes", Luggage, "Viajes"],
-  ["/espacios", MapPin, "Espacios"],
   ["/outfits", Heart, "Outfits"],
-  ["/usos", CalendarDays, "Usos"],
-  ["/pedidos", PackagePlus, "Pedidos"],
+  ["/que-ponerme", Cloud, "Qué ponerme"],
+  ["/espacios", MapPin, "Espacios"],
   ["/plan-venta", Store, "Plan de venta"],
-  ["/revision", Brain, "Revisión"],
-  ["/decisiones", Archive, "Decidir"],
   ["/balance", WalletCards, "Balance"],
+  ["/viajes", Luggage, "Viajes"],
+  ["/revision", Brain, "Revisión"],
   ["/estadisticas", BarChart3, "Estadísticas"],
   ["/ajustes", SettingsIcon, "Ajustes"],
+  ["/usos", CalendarDays, "Usos"],
+  ["/pedidos", PackagePlus, "Pedidos"],
+  ["/decisiones", Archive, "Decidir"],
 ] as const;
+const navGroups = [
+  {
+    title: "Uso diario",
+    items: nav.filter(([to]) =>
+      ["/", "/armario", "/outfits", "/que-ponerme"].includes(to),
+    ),
+  },
+  {
+    title: "Gestión",
+    items: nav.filter(([to]) =>
+      ["/espacios", "/plan-venta", "/balance", "/viajes"].includes(to),
+    ),
+  },
+  {
+    title: "Análisis",
+    items: nav.filter(([to]) => ["/revision", "/estadisticas"].includes(to)),
+  },
+  {
+    title: "Configuración",
+    items: nav.filter(([to]) =>
+      ["/ajustes", "/usos", "/pedidos", "/decisiones"].includes(to),
+    ),
+  },
+];
 function Sidebar() {
   const sync = useSyncSummary();
   return (
@@ -1661,11 +1691,16 @@ function Sidebar() {
         </div>
       </div>
       <nav>
-        {nav.map(([to, I, label]) => (
-          <NavLink key={to} to={to} end={to === "/"}>
-            <I />
-            {label}
-          </NavLink>
+        {navGroups.map((group) => (
+          <div className="nav-group" key={group.title}>
+            <p>{group.title}</p>
+            {group.items.map(([to, I, label]) => (
+              <NavLink key={to} to={to} end={to === "/"}>
+                <I />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
       <p className="local-note">
@@ -1679,13 +1714,13 @@ function Sidebar() {
   );
 }
 function BottomNav() {
-  const mobile = [nav[0], nav[1], nav[2], nav[4]];
+  const mobile = [nav[0], nav[1], nav[2], nav[3]];
   return (
     <nav className="bottom-nav">
       {mobile.map(([to, I, label]) => (
         <NavLink key={to} to={to} end={to === "/"}>
           <I />
-          <span>{label}</span>
+          <span>{to === "/que-ponerme" ? "Hoy" : label}</span>
         </NavLink>
       ))}
       <NavLink to="/ajustes">
@@ -1774,130 +1809,109 @@ function Dashboard() {
   const upcomingTripForecast = upcomingTrip
     ? tripForecast(d.weatherCache, upcomingTrip.id)[0]
     : undefined;
+  const dailyNotice = unlocatedCount
+    ? {
+        title: `${unlocatedCount} prendas sin ubicación`,
+        text: "Puedes asignarlas cuando tengas un minuto.",
+        to: "/espacios",
+        action: "Ver prendas sin ubicar",
+      }
+    : readyDrafts
+      ? {
+          title: `${readyDrafts} borradores de venta listos`,
+          text: "Buen momento para preparar una subida tranquila.",
+          to: "/plan-venta",
+          action: "Preparar venta",
+        }
+      : upcomingTrip && upcomingTripStats
+        ? {
+            title: `Viaje próximo: ${upcomingTrip.name}`,
+            text: `${upcomingTripStats.pending} cosas pendientes en la maleta.`,
+            to: `/viajes/${upcomingTrip.id}`,
+            action: "Abrir viaje",
+          }
+        : reviewCount
+          ? {
+              title: `${reviewCount} prendas para revisar`,
+              text: "La revisión inteligente tiene sugerencias suaves.",
+              to: "/revision",
+              action: "Revisar más tarde",
+            }
+          : {
+              title: "Todo bastante en orden",
+              text: "Añade una prenda, registra un uso o crea un outfit.",
+              to: "/armario",
+              action: "Abrir armario",
+            };
   if (!d.items.length && !d.orders.length && !d.sales.length && !d.wishlist.length)
     return <Welcome onAdd={() => n("/prenda/nueva")} />;
   return (
     <>
-      <PageHead eyebrow="RESUMEN" title="Tu armario, hoy">
+      <PageHead eyebrow="HOY" title="Tu armario, hoy">
         <Button onClick={() => n("/prenda/nueva")}>
           <Plus /> Añadir prenda
         </Button>
       </PageHead>
       <section className="hero">
         <div>
-          <p className="eyebrow">ESTE MES</p>
+          <p className="eyebrow">RECOMENDACIÓN DE HOY</p>
           <h2>
-            {outs >= ins
-              ? "Todo en equilibrio"
-              : "Han entrado algunas prendas nuevas"}
+            {contextOverview.recommendation?.context.title ||
+              "Elige algo cómodo y fácil de repetir"}
           </h2>
           <p>
-            {ins} entradas · {outs} salidas
+            {contextOverview.forecast
+              ? `${contextOverview.location.name} · ${Math.round(contextOverview.forecast.temperatureMin)}–${Math.round(contextOverview.forecast.temperatureMax)}°C · ${contextOverview.forecast.description}`
+              : contextOverview.recommendation?.reasons[0] ||
+                "Añade rutinas o eventos para afinar la recomendación."}
           </p>
         </div>
         <div className="balance-number">
           <span>Balance del mes</span>
-          <b>{money(earned - spent)}</b>
+          <b>{ins} entradas · {outs} salidas</b>
         </div>
       </section>
-      <div className="stat-grid">
-        <Stat label="Prendas activas" value={activeItems.length} icon={<Shirt />} />
-        <Stat
-          label="Gasto este mes"
-          value={money(spent)}
-          note={
-            d.settings.monthlyClothingBudget
-              ? `${money(d.settings.monthlyClothingBudget - spent)} disponibles`
-              : undefined
-          }
-          icon={<ShoppingBag />}
-        />
-        <Stat
-          label="Recuperado"
-          value={money(earned)}
-          icon={<CircleDollarSign />}
-        />
-        <Stat
-          label="Sin usar en 90 días"
-          value={forgotten}
-          icon={<ClipboardList />}
-        />
-      </div>
       <div className="quick-links">
+        <NavLink to="/prenda/nueva">
+          <Plus />
+          <span>
+            <b>Añadir prenda</b>
+            <small>Foto y datos básicos</small>
+          </span>
+        </NavLink>
         <NavLink to="/usos">
           <CalendarDays />
           <span>
             <b>Registrar uso</b>
-            <small>Apunta rápidamente lo que llevas</small>
+            <small>Lo que llevas hoy</small>
           </span>
         </NavLink>
-        <NavLink to="/decisiones">
-          <Archive />
-          <span>
-            <b>Para revisar</b>
-            <small>
-              {counts.sell + counts.donate + counts.maybe + counts.repair}{" "}
-              decisiones pendientes
-            </small>
-          </span>
-        </NavLink>
-        <NavLink to="/outfits">
+        <NavLink to="/outfits/crear">
           <Heart />
           <span>
-            <b>Crear una combinación</b>
-            <small>Mezcla prendas de tu armario</small>
+            <b>Crear outfit</b>
+            <small>Componer un look</small>
           </span>
         </NavLink>
-        <NavLink to="/que-ponerme">
-          <Cloud />
+        <NavLink to="/armario">
+          <Search />
           <span>
-            <b>Qué ponerme</b>
-            <small>Clima, rutina y eventos en una recomendación</small>
-          </span>
-        </NavLink>
-        <NavLink to="/viajes">
-          <Luggage />
-          <span>
-            <b>Planear viaje</b>
-            <small>Maleta, outfits y clima del destino</small>
-          </span>
-        </NavLink>
-        <NavLink to="/pedidos">
-          <PackagePlus />
-          <span>
-            <b>Nueva compra</b>
-            <small>Crea prendas desde un pedido</small>
-          </span>
-        </NavLink>
-        <NavLink to="/salidas">
-          <Archive />
-          <span>
-            <b>Registrar salida</b>
-            <small>Venta, donación u otra salida</small>
-          </span>
-        </NavLink>
-        <NavLink to="/plan-venta">
-          <Store />
-          <span>
-            <b>Plan de venta</b>
-            <small>Organiza Vinted y tus ventas por fases</small>
-          </span>
-        </NavLink>
-        <NavLink to="/wishlist">
-          <Heart />
-          <span>
-            <b>Wishlist</b>
-            <small>{d.wishlist.filter((w) => w.status === "pending").length} deseos pendientes</small>
-          </span>
-        </NavLink>
-        <NavLink to="/revision">
-          <Brain />
-          <span>
-            <b>Revisión inteligente</b>
-            <small>Insights suaves para decidir mejor</small>
+            <b>Buscar prenda</b>
+            <small>Ir al armario</small>
           </span>
         </NavLink>
       </div>
+      <section className="panel daily-notice">
+        <div>
+          <p className="eyebrow">AVISO ÚTIL</p>
+          <h2>{dailyNotice.title}</h2>
+          <p>{dailyNotice.text}</p>
+        </div>
+        <NavLink to={dailyNotice.to}>{dailyNotice.action}</NavLink>
+      </section>
+      <details className="daily-more">
+        <summary>Más módulos y resumen avanzado</summary>
+        <div className="daily-more-content">
       <section className="panel location-summary">
         <div className="section-title">
           <div>
@@ -2074,6 +2088,8 @@ function Dashboard() {
           )}
         </section>
       </div>
+        </div>
+      </details>
     </>
   );
 }
@@ -2335,17 +2351,32 @@ function ItemForm() {
     d = useData(),
     n = useNavigate(),
     existing = d.items.find((i) => i.id === id);
+  const blankItem: Partial<ClothingItem> = {
+    name: "",
+    category: "",
+    colors: [],
+    season: [],
+    physicalStatus: "good",
+    decisionStatus: "keep",
+  };
   const [form, setForm] = useState<Partial<ClothingItem>>(
-      existing || {
-        name: "",
-        category: "",
-        colors: [],
-        season: [],
-        physicalStatus: "good",
-        decisionStatus: "keep",
-      },
+      existing || blankItem,
     ),
     [error, setError] = useState("");
+  useEffect(() => {
+    if (existing) {
+      setForm({
+        ...existing,
+        colors: existing.colors || [],
+        season: existing.season || [],
+        tags: existing.tags || [],
+        physicalStatus: existing.physicalStatus || "good",
+        decisionStatus: existing.decisionStatus || "keep",
+      });
+    } else if (!id) {
+      setForm(blankItem);
+    }
+  }, [id, existing?.id]);
   if (id && !existing) return <p>Cargando…</p>;
   const set = (k: keyof ClothingItem, v: unknown) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -2371,6 +2402,7 @@ function ItemForm() {
       return setError("Los precios no pueden ser negativos.");
     const stamp = now();
     const item = {
+      ...existing,
       ...form,
       id: existing?.id || uid(),
       name: form.name.trim(),
@@ -2398,8 +2430,29 @@ function ItemForm() {
       <form className="form-page" onSubmit={submit}>
         {error && <p className="form-error">{error}</p>}
         <FormSection
-          title="Información básica"
-          intro="Lo esencial para reconocerla."
+          title="Foto"
+          intro="La imagen hace que encontrarla sea mucho más fácil."
+        >
+          <label className="image-upload full">
+            {form.image ? (
+              <img src={form.image} />
+            ) : (
+              <>
+                <Upload />
+                <span>Seleccionar una foto</span>
+              </>
+            )}
+            <input
+              hidden
+              type="file"
+              accept="image/*"
+              onChange={(e) => image(e.target.files?.[0])}
+            />
+          </label>
+        </FormSection>
+        <FormSection
+          title="Lo esencial"
+          intro="Solo lo necesario para usarla en el día a día."
         >
           <label>
             Nombre *
@@ -2421,57 +2474,6 @@ function ItemForm() {
               ))}
             </select>
           </label>
-          <label>
-            Subcategoría
-            <input
-              value={form.subcategory || ""}
-              onChange={(e) => set("subcategory", e.target.value)}
-              placeholder="Opcional"
-            />
-          </label>
-          <label>
-            Talla
-            <input
-              value={form.size || ""}
-              onChange={(e) => set("size", e.target.value)}
-            />
-          </label>
-          <label className="full">
-            Ubicación
-            <select
-              value={form.spaceId || ""}
-              onChange={(e) =>
-                set("spaceId", e.target.value || undefined)
-              }
-            >
-              <option value="">Sin ubicación asignada</option>
-              {sortedSpaces(d.spaces).map((space) => (
-                  <option key={space.id} value={space.id}>
-                    {spacePathText(space.id, d.spaces)}
-                  </option>
-                ))}
-            </select>
-          </label>
-        </FormSection>
-        <FormSection title="Imagen" intro="Se guarda solo en tu dispositivo.">
-          <label className="image-upload">
-            {form.image ? (
-              <img src={form.image} />
-            ) : (
-              <>
-                <Upload />
-                <span>Seleccionar una foto</span>
-              </>
-            )}
-            <input
-              hidden
-              type="file"
-              accept="image/*"
-              onChange={(e) => image(e.target.files?.[0])}
-            />
-          </label>
-        </FormSection>
-        <FormSection title="Clasificación">
           <div className="full">
             <span className="field-label">Colores</span>
             <div className="chips">
@@ -2502,6 +2504,52 @@ function ItemForm() {
               ))}
             </div>
           </div>
+          <label>
+            ¿Qué quieres hacer?
+            <select
+              value={form.decisionStatus}
+              onChange={(e) => set("decisionStatus", e.target.value)}
+            >
+              {Object.entries(decisions).map(([k, v]) => (
+                <option value={k} key={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Ubicación
+            <select
+              value={form.spaceId || ""}
+              onChange={(e) =>
+                set("spaceId", e.target.value || undefined)
+              }
+            >
+              <option value="">Sin ubicación asignada</option>
+              {sortedSpaces(d.spaces).map((space) => (
+                  <option key={space.id} value={space.id}>
+                    {spacePathText(space.id, d.spaces)}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </FormSection>
+        <FormSection title="Detalles opcionales" collapsible>
+          <label>
+            Subcategoría
+            <input
+              value={form.subcategory || ""}
+              onChange={(e) => set("subcategory", e.target.value)}
+              placeholder="Opcional"
+            />
+          </label>
+          <label>
+            Talla
+            <input
+              value={form.size || ""}
+              onChange={(e) => set("size", e.target.value)}
+            />
+          </label>
           <label className="full">
             Etiquetas
             <input
@@ -2532,8 +2580,6 @@ function ItemForm() {
               onChange={(e) => set("store", e.target.value)}
             />
           </label>
-        </FormSection>
-        <FormSection title="Compra y valor">
           <label>
             Precio original (€)
             <input
@@ -2572,8 +2618,6 @@ function ItemForm() {
               onChange={(e) => set("purchaseDate", e.target.value)}
             />
           </label>
-        </FormSection>
-        <FormSection title="Estado y decisión">
           <label>
             Estado físico
             <select
@@ -2587,19 +2631,16 @@ function ItemForm() {
               ))}
             </select>
           </label>
-          <label>
-            ¿Qué quieres hacer?
-            <select
-              value={form.decisionStatus}
-              onChange={(e) => set("decisionStatus", e.target.value)}
-            >
-              {Object.entries(decisions).map(([k, v]) => (
-                <option value={k} key={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
+          <label className="full">
+            Algo que quieras recordar
+            <textarea
+              value={form.notes || ""}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="Cómo combinarla, arreglos pendientes..."
+            />
           </label>
+        </FormSection>
+        <FormSection title="Datos avanzados" intro="Para revisión inteligente, venta y decisiones futuras." collapsible>
           {form.decisionStatus === "sell" && (
             <label>
               Estado en Vinted
@@ -2613,11 +2654,6 @@ function ItemForm() {
               </select>
             </label>
           )}
-        </FormSection>
-        <FormSection
-          title="Datos aproximados"
-          intro="Opcional. Solo lo justo para que la revisión inteligente entienda mejor esta prenda."
-        >
           <label>
             Año aproximado de compra
             <input
@@ -2748,16 +2784,6 @@ function ItemForm() {
             />
           </label>
         </FormSection>
-        <FormSection title="Notas">
-          <label className="full">
-            Algo que quieras recordar
-            <textarea
-              value={form.notes || ""}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="Cómo combinarla, arreglos pendientes..."
-            />
-          </label>
-        </FormSection>
         <div className="form-actions">
           <Button variant="secondary" type="button" onClick={() => n(-1)}>
             Cancelar
@@ -2772,18 +2798,36 @@ function FormSection({
   title,
   intro,
   children,
+  collapsible,
 }: {
   title: string;
   intro?: string;
   children: ReactNode;
+  collapsible?: boolean;
 }) {
-  return (
-    <section className="form-section">
+  const content = (
+    <>
       <header>
         <h2>{title}</h2>
         {intro && <p>{intro}</p>}
       </header>
       <div className="form-grid">{children}</div>
+    </>
+  );
+  return collapsible ? (
+    <details className="form-section collapsible-section">
+      <summary>
+        <span>
+          <h2>{title}</h2>
+          {intro && <p>{intro}</p>}
+        </span>
+        <b>Mostrar</b>
+      </summary>
+      <div className="form-grid">{children}</div>
+    </details>
+  ) : (
+    <section className="form-section">
+      {content}
     </section>
   );
 }
@@ -2812,7 +2856,7 @@ function ItemDetail() {
   }
   async function remove() {
     if (confirm("¿Eliminar esta prenda y sus referencias?")) {
-      await db.transaction("rw", [db.clothingItems, db.wearLogs, db.resaleListings], async () => {
+      await db.transaction("rw", [db.clothingItems, db.wearLogs, db.resaleListings, db.syncDeletes], async () => {
         await softDeleteRecords("clothingItems", [item!.id]);
         await softDeleteRecords(
           "wearLogs",
@@ -2882,17 +2926,54 @@ function ItemDetail() {
             >
               <Pencil /> Editar
             </Button>
-            <Button variant="secondary" onClick={() => setReviewOpen(true)}>
-              <Brain /> Revisar prenda
-            </Button>
-            <Button variant="ghost" onClick={remove}>
-              <Trash2 /> Eliminar
-            </Button>
-            {item.decisionStatus === "sell" && !item.isArchived && (
-              <Button variant="secondary" onClick={() => setVintedOpen(true)}>
-                <Clipboard /> Anuncio Vinted
-              </Button>
-            )}
+            <details className="action-menu">
+              <summary>Más</summary>
+              <div>
+                <button onClick={() => setReviewOpen(true)}>
+                  <Brain /> Revisar prenda
+                </button>
+                {item.decisionStatus === "sell" && !item.isArchived && (
+                  <button onClick={() => setVintedOpen(true)}>
+                    <Clipboard /> Anuncio Vinted
+                  </button>
+                )}
+                <button
+                  onClick={() =>
+                    db.clothingItems.update(item.id, {
+                      decisionStatus: "sell",
+                      updatedAt: now(),
+                    })
+                  }
+                >
+                  <Store /> Marcar para vender
+                </button>
+                <button
+                  onClick={() =>
+                    db.clothingItems.update(item.id, {
+                      decisionStatus: "donate",
+                      updatedAt: now(),
+                    })
+                  }
+                >
+                  <Archive /> Marcar para donar
+                </button>
+                <button
+                  onClick={() =>
+                    db.clothingItems.update(item.id, {
+                      isArchived: true,
+                      archivedAt: today(),
+                      archiveReason: "discarded",
+                      updatedAt: now(),
+                    })
+                  }
+                >
+                  <Archive /> Archivar
+                </button>
+                <button className="danger" onClick={remove}>
+                  <Trash2 /> Eliminar
+                </button>
+              </div>
+            </details>
           </div>
           <div className="use-stats">
             <Stat label="Veces usada" value={logs.length} />
@@ -2964,23 +3045,25 @@ function ItemDetail() {
             {item.notes && <Fact l="Notas" v={item.notes} />}
             {item.doubtReason && <Fact l="Motivo de duda" v={item.doubtReason} />}
           </section>
-          <div className="quick-decision">
-            <p>Decisión rápida</p>
-            {(Object.keys(decisions) as DecisionStatus[]).map((k) => (
-              <button
-                className={item.decisionStatus === k ? "active" : ""}
-                key={k}
-                onClick={() =>
-                  db.clothingItems.update(item.id, {
-                    decisionStatus: k,
-                    updatedAt: now(),
-                  })
-                }
-              >
-                {decisions[k]}
-              </button>
-            ))}
-          </div>
+          <details className="quick-decision">
+            <summary>Decisión rápida</summary>
+            <div>
+              {(Object.keys(decisions) as DecisionStatus[]).map((k) => (
+                <button
+                  className={item.decisionStatus === k ? "active" : ""}
+                  key={k}
+                  onClick={() =>
+                    db.clothingItems.update(item.id, {
+                      decisionStatus: k,
+                      updatedAt: now(),
+                    })
+                  }
+                >
+                  {decisions[k]}
+                </button>
+              ))}
+            </div>
+          </details>
         </div>
       </div>
       {vintedOpen && (
@@ -4755,7 +4838,7 @@ function TripsPage() {
       .map((entry) => entry.id);
     await db.transaction(
       "rw",
-      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache],
+      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache, db.syncDeletes],
       async () => {
         if (packingIds.length) await softDeleteRecords("tripPackingItems", packingIds);
         if (plannedIds.length) await softDeleteRecords("tripPlannedOutfits", plannedIds);
@@ -4881,7 +4964,7 @@ function TripDetail() {
       .map((entry) => entry.id);
     await db.transaction(
       "rw",
-      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache],
+      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache, db.syncDeletes],
       async () => {
         if (stats.packing.length)
           await softDeleteRecords(
@@ -5569,15 +5652,9 @@ function WhatToWearPage() {
 function Outfits() {
   const d = useData(),
     n = useNavigate(),
-    [open, setOpen] = useState<Outfit | true | false>(false);
-  async function use(o: Outfit) {
-    await db.wearLogs.add({
-      id: uid(),
-      clothingItemIds: o.clothingItemIds,
-      outfitId: o.id,
-      date: today(),
-    });
-  }
+    [editOpen, setEditOpen] = useState<Outfit | true | false>(false),
+    [detailOpen, setDetailOpen] = useState<Outfit | undefined>(),
+    [wearOpen, setWearOpen] = useState<Outfit | undefined>();
   return (
     <>
       <PageHead eyebrow={`${d.outfits.length} COMBINACIONES`} title="Outfits">
@@ -5589,12 +5666,21 @@ function Outfits() {
         <div className="outfit-grid">
           {d.outfits.map((o) => (
             <article className="outfit" key={o.id}>
-              <div className="outfit-collage">
+              <button className="outfit-open" onClick={() => setDetailOpen(o)}>
+                <div className="outfit-collage">
+                  {(o.wornPhoto || o.wornPhotos?.[0]) && (
+                    <img
+                      className="worn-preview"
+                      src={o.wornPhoto || o.wornPhotos?.[0]}
+                      alt=""
+                    />
+                  )}
                 {o.clothingItemIds.slice(0, 3).map((id) => {
                   const i = d.items.find((x) => x.id === id);
                   return i && <ItemThumb key={id} item={i} />;
                 })}
-              </div>
+                </div>
+              </button>
               <div>
                 <span className="eyebrow">{o.occasion || "COMBINACIÓN"}</span>
                 <h3>
@@ -5603,9 +5689,17 @@ function Outfits() {
                 <p>
                   {o.clothingItemIds.length} prendas · {o.season.join(", ")}
                 </p>
+                <div className="outfit-status">
+                  {(o.wornPhoto || o.wornPhotos?.length) && <span>Foto real</span>}
+                  {o.lastWornAt && <span>Probado</span>}
+                  {o.fitRating && <span>Queda {o.fitRating}/5</span>}
+                </div>
                 <div className="row">
-                  <Button onClick={() => use(o)}>Usar hoy</Button>
-                  <Button variant="ghost" onClick={() => setOpen(o)}>
+                  <Button onClick={() => setWearOpen(o)}>Usar hoy</Button>
+                  <Button variant="ghost" onClick={() => setDetailOpen(o)}>
+                    <Camera />
+                  </Button>
+                  <Button variant="ghost" onClick={() => setEditOpen(o)}>
                     <Pencil />
                   </Button>
                   <Button
@@ -5629,14 +5723,306 @@ function Outfits() {
           action={<Button onClick={() => n("/outfits/crear")}>Componer primer look</Button>}
         />
       )}{" "}
-      {open && (
+      {detailOpen && (
+        <OutfitDetailModal
+          data={d}
+          outfit={detailOpen}
+          close={() => setDetailOpen(undefined)}
+          onEdit={() => {
+            setEditOpen(detailOpen);
+            setDetailOpen(undefined);
+          }}
+          onWear={() => {
+            setWearOpen(detailOpen);
+            setDetailOpen(undefined);
+          }}
+        />
+      )}
+      {wearOpen && (
+        <OutfitWearModal
+          outfit={wearOpen}
+          close={() => setWearOpen(undefined)}
+        />
+      )}
+      {editOpen && (
         <OutfitModal
           data={d}
-          outfit={open === true ? undefined : open}
-          close={() => setOpen(false)}
+          outfit={editOpen === true ? undefined : editOpen}
+          close={() => setEditOpen(false)}
         />
       )}
     </>
+  );
+}
+
+function RatingField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value?: number | "";
+  onChange: (value: 1 | 2 | 3 | 4 | 5 | undefined) => void;
+}) {
+  return (
+    <div className="rating-field">
+      <span>{label}</span>
+      <div>
+        {[1, 2, 3, 4, 5].map((rating) => (
+          <button
+            type="button"
+            key={rating}
+            className={value === rating ? "active" : ""}
+            onClick={() =>
+              onChange(value === rating ? undefined : (rating as 1 | 2 | 3 | 4 | 5))
+            }
+          >
+            {rating}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OutfitRealPhotos({
+  outfit,
+  onAdd,
+}: {
+  outfit: Outfit;
+  onAdd: (files?: FileList | null) => void;
+}) {
+  const photos = Array.from(
+    new Set([...(outfit.wornPhotos || []), outfit.wornPhoto || ""].filter(Boolean)),
+  );
+  return (
+    <div className="worn-gallery">
+      {photos.length ? (
+        photos.map((photo, index) => (
+          <img key={`${photo.slice(0, 24)}-${index}`} src={photo} alt="" />
+        ))
+      ) : (
+        <label className="worn-upload">
+          <Camera />
+          <span>Añadir foto llevándolo puesto</span>
+          <input
+            hidden
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => onAdd(e.target.files)}
+          />
+        </label>
+      )}
+      {!!photos.length && (
+        <label className="worn-add">
+          <Plus />
+          <input
+            hidden
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => onAdd(e.target.files)}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function OutfitDetailModal({
+  data,
+  outfit,
+  close,
+  onEdit,
+  onWear,
+}: {
+  data: Data;
+  outfit: Outfit;
+  close: () => void;
+  onEdit: () => void;
+  onWear: () => void;
+}) {
+  const current = data.outfits.find((entry) => entry.id === outfit.id) || outfit;
+  const outfitItems = current.clothingItemIds
+    .map((id) => data.items.find((item) => item.id === id))
+    .filter(Boolean) as ClothingItem[];
+
+  async function addPhotos(files?: FileList | null) {
+    const photos = await compressImages(files || undefined);
+    if (!photos.length) return;
+    const nextPhotos = [...(current.wornPhotos || []), ...photos];
+    await db.outfits.update(current.id, {
+      wornPhoto: current.wornPhoto || nextPhotos[0],
+      wornPhotos: nextPhotos,
+      imageUpdatedAt: now(),
+      updatedAt: now(),
+    });
+  }
+
+  async function update(changes: Partial<Outfit>) {
+    await db.outfits.update(current.id, {
+      ...changes,
+      updatedAt: now(),
+    });
+  }
+
+  return (
+    <Modal title={current.name} onClose={close} wide>
+      <div className="outfit-detail-layout">
+        <section>
+          <p className="eyebrow">OUTFIT COMPUESTO</p>
+          <div className="outfit-detail-collage">
+            {outfitItems.map((item) => (
+              <NavLink to={`/prenda/${item.id}`} key={item.id}>
+                <ItemThumb item={item} />
+                <span>{item.name}</span>
+              </NavLink>
+            ))}
+          </div>
+          <div className="context-actions">
+            <button onClick={onWear}>Usar hoy</button>
+            <button onClick={onEdit}>Editar outfit</button>
+          </div>
+        </section>
+        <section>
+          <p className="eyebrow">LOOK REAL</p>
+          <OutfitRealPhotos outfit={current} onAdd={addPhotos} />
+          <div className="rating-panel">
+            <RatingField
+              label="Qué tal te queda"
+              value={current.fitRating || ""}
+              onChange={(value) => update({ fitRating: value })}
+            />
+            <RatingField
+              label="Cómo te sientes"
+              value={current.confidenceRating || ""}
+              onChange={(value) => update({ confidenceRating: value })}
+            />
+          </div>
+          <label className="after-notes">
+            Notas después de llevarlo
+            <textarea
+              value={current.notesAfterWearing || ""}
+              onChange={(e) =>
+                update({ notesAfterWearing: e.target.value || undefined })
+              }
+              placeholder="Qué funcionó, qué cambiarías, cuándo repetirlo..."
+            />
+          </label>
+          <div className="detail-badges">
+            {current.lastWornAt && <span>Último uso: {dateFmt(current.lastWornAt)}</span>}
+            {current.favorite && <span>Favorito</span>}
+          </div>
+        </section>
+      </div>
+    </Modal>
+  );
+}
+
+function OutfitWearModal({
+  outfit,
+  close,
+}: {
+  outfit: Outfit;
+  close: () => void;
+}) {
+  const [photos, setPhotos] = useState<string[]>([]),
+    [fitRating, setFitRating] = useState<1 | 2 | 3 | 4 | 5 | undefined>(outfit.fitRating),
+    [confidenceRating, setConfidenceRating] = useState<1 | 2 | 3 | 4 | 5 | undefined>(outfit.confidenceRating),
+    [notes, setNotes] = useState(outfit.notesAfterWearing || ""),
+    [busy, setBusy] = useState(false);
+
+  async function loadPhotos(files?: FileList | null) {
+    setBusy(true);
+    try {
+      const compressed = await compressImages(files || undefined);
+      setPhotos((current) => [...current, ...compressed]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const stamp = now();
+    await db.transaction("rw", [db.wearLogs, db.outfits], async () => {
+      await db.wearLogs.add({
+        id: uid(),
+        clothingItemIds: outfit.clothingItemIds,
+        outfitId: outfit.id,
+        date: today(),
+        notes: notes || undefined,
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+      const nextPhotos = [...(outfit.wornPhotos || []), ...photos];
+      await db.outfits.update(outfit.id, {
+        wornPhoto: outfit.wornPhoto || nextPhotos[0],
+        wornPhotos: nextPhotos.length ? nextPhotos : outfit.wornPhotos,
+        fitRating,
+        confidenceRating,
+        notesAfterWearing: notes || undefined,
+        lastWornAt: today(),
+        imageUpdatedAt: photos.length ? stamp : outfit.imageUpdatedAt,
+        updatedAt: stamp,
+      });
+    });
+    close();
+  }
+
+  return (
+    <Modal title="Usar outfit hoy" onClose={close} wide>
+      <form className="modal-form" onSubmit={save}>
+        <label className="full image-upload">
+          {photos.length ? (
+            <div className="worn-upload-preview">
+              {photos.map((photo, index) => (
+                <img key={`${photo.slice(0, 24)}-${index}`} src={photo} />
+              ))}
+            </div>
+          ) : (
+            <>
+              <Camera />
+              <span>Subir foto del look puesto</span>
+            </>
+          )}
+          <input
+            hidden
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => loadPhotos(e.target.files)}
+          />
+        </label>
+        <div className="full rating-panel">
+          <RatingField
+            label="Qué tal te queda"
+            value={fitRating || ""}
+            onChange={setFitRating}
+          />
+          <RatingField
+            label="Cómo te sientes con este look"
+            value={confidenceRating || ""}
+            onChange={setConfidenceRating}
+          />
+        </div>
+        <label className="full">
+          Nota después de llevarlo
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Qué te gustó, qué cambiarías, cuándo repetirlo..."
+          />
+        </label>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={close}>
+            Cancelar
+          </Button>
+          <Button disabled={busy}>{busy ? "Preparando foto..." : "Guardar uso"}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -5819,6 +6205,7 @@ function OutfitModal({
     if (!name || !ids.length) return;
     const t = now();
     await db.outfits.put({
+      ...outfit,
       id: outfit?.id || uid(),
       name,
       clothingItemIds: ids,
@@ -7596,7 +7983,7 @@ function SettingsPage() {
   }
   async function exportData() {
     const data = {
-        version: 5,
+        version: 8,
         exportedAt: now(),
         clothingItems: d.items,
         wearLogs: d.wears,
