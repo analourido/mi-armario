@@ -285,6 +285,7 @@ export interface Trip extends SyncMeta {
     | "city"
     | "other";
   coverImage?: string;
+  coverImageUpdatedAt?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;

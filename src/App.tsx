@@ -2880,7 +2880,12 @@ function ItemForm() {
     [error, setError] = useState(""),
     [nameWasManuallyEdited, setNameWasManuallyEdited] = useState(!!existing?.name),
     [lastAutoName, setLastAutoName] = useState(""),
-    [tagDraft, setTagDraft] = useState("");
+    [tagDraft, setTagDraft] = useState(""),
+    [step, setStep] = useState(0),
+    [optionalOpen, setOptionalOpen] = useState(false),
+    [colorDraft, setColorDraft] = useState(""),
+    [colorHex, setColorHex] = useState("#d4d4d4"),
+    [customColorHexes, setCustomColorHexes] = useState<Record<string, string>>({});
   useEffect(() => {
     if (existing) {
       setForm({
@@ -2928,6 +2933,12 @@ function ItemForm() {
   ].filter(Boolean);
   const uniqueTags = addManyUnique([], savedTags);
   const colorOptions = wardrobeColors(d.settings);
+  const mergedColorOptions = [
+    ...colorOptions,
+    ...Object.entries(customColorHexes)
+      .filter(([name]) => !colorOptions.some((color) => normalizeKey(color.name) === normalizeKey(name)))
+      .map(([name, hex]) => ({ id: normalizeKey(name), name, hex })),
+  ];
   function applySuggestedName() {
     const suggested = suggestedItemName(form);
     if (suggested) {
@@ -2941,6 +2952,14 @@ function ItemForm() {
     set("tags", next);
     setTagDraft("");
   }
+  function addColor() {
+    const clean = prettyValue(colorDraft);
+    if (!clean) return;
+    set("colors", addUnique(form.colors || [], clean));
+    setCustomColorHexes((current) => ({ ...current, [clean]: colorHex }));
+    setColorDraft("");
+    setColorHex("#d4d4d4");
+  }
   async function persistReusableOptions(item: ClothingItem) {
     const nextSettings: Settings = {
       ...d.settings,
@@ -2950,6 +2969,16 @@ function ItemForm() {
       tags: addManyUnique(d.settings.tags || d.settings.frequentTags || [], item.tags || []),
       frequentTags: addManyUnique(d.settings.frequentTags || [], item.tags || []),
       colors: addManyUnique(d.settings.colors || [], item.colors || []),
+      wardrobeColors: [
+        ...(d.settings.wardrobeColors || []),
+        ...Object.entries(customColorHexes)
+          .filter(([name]) => !wardrobeColors(d.settings).some((color) => normalizeKey(color.name) === normalizeKey(name)))
+          .map(([name, hex]) => ({
+            id: normalizeKey(name) || uid(),
+            name,
+            hex,
+          })),
+      ],
       seasons: addManyUnique(d.settings.seasons || [], item.season || []),
       updatedAt: now(),
     };
@@ -2987,428 +3016,334 @@ function ItemForm() {
     await persistReusableOptions(item);
     n(`/prenda/${item.id}`);
   }
+  function leave() {
+    const dirty =
+      JSON.stringify({
+        ...blankItem,
+        ...existing,
+        colors: existing?.colors || [],
+        season: existing?.season || [],
+        tags: existing?.tags || [],
+      }) !== JSON.stringify(form);
+    if (!dirty || confirm("Hay cambios sin guardar. ¿Salir igualmente?")) n(-1);
+  }
+  const steps = ["Foto", "Esencial", "Identidad", "Revisión"];
+  const selectedSpace = form.spaceId ? spacePathText(form.spaceId, d.spaces) : "Sin ubicación";
+  const previewName = form.name?.trim() || suggestedItemName(form) || "Prenda sin nombre";
   return (
     <>
-      <PageHead
-        eyebrow={existing ? "EDITAR PRENDA" : "NUEVA PRENDA"}
-        title={existing ? existing.name : "Añade algo a tu armario"}
-      >
-        <Button variant="ghost" onClick={() => n(-1)}>
+      <div className="item-flow-head">
+        <div>
+          <p className="eyebrow">{existing ? "EDITAR PRENDA" : "NUEVA PRENDA"}</p>
+          <h1>{existing ? existing.name : "Añadir prenda"}</h1>
+        </div>
+        <Button variant="ghost" onClick={leave}>
           <X /> Cerrar
         </Button>
-      </PageHead>
-      <form className="form-page" onSubmit={submit}>
+      </div>
+      <form className="item-flow" onSubmit={submit}>
         {error && <p className="form-error">{error}</p>}
-        <FormSection
-          title="Foto"
-          intro="La imagen hace que encontrarla sea mucho más fácil."
-        >
-          <label className="image-upload full">
-            {form.image ? (
-              <img src={form.image} />
-            ) : (
-              <>
-                <Upload />
-                <span>Seleccionar una foto</span>
-              </>
-            )}
-            <input
-              hidden
-              type="file"
-              accept="image/*"
-              onChange={(e) => image(e.target.files?.[0])}
-            />
-          </label>
-        </FormSection>
-        <FormSection
-          title="Lo esencial"
-          intro="Solo lo necesario para usarla en el día a día."
-        >
-          <label>
-            Nombre *
-            <input
-              value={form.name || ""}
-              onChange={(e) => {
-                setNameWasManuallyEdited(true);
-                set("name", e.target.value);
-              }}
-              placeholder="Ej. Camisa de lino"
-            />
-            <button className="mini-action" type="button" onClick={applySuggestedName}>
-              <Sparkles /> Generar nombre
+        <div className="item-flow-steps">
+          {steps.map((label, index) => (
+            <button
+              type="button"
+              className={step === index ? "active" : ""}
+              onClick={() => setStep(index)}
+              key={label}
+            >
+              <span>{index + 1}</span>
+              {label}
             </button>
-          </label>
-          <label>
-            Categoría *
-            <select
-              value={form.category || ""}
-              onChange={(e) => set("category", e.target.value)}
-            >
-              <option value="">Selecciona una</option>
-              {d.settings.categories.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <div className="full">
-            <span className="field-label">Colores</span>
-            <div className="chips color-picker">
-              {colorOptions.map((color) => (
-                <button
-                  type="button"
-                  className={(form.colors || []).includes(color.name) ? "selected" : ""}
-                  onClick={() => toggle("colors", color.name)}
-                  key={color.id}
-                >
-                  <i
-                    className={normalizeKey(color.name) === "multicolor" ? "multi" : ""}
-                    style={{ background: color.hex }}
+          ))}
+        </div>
+        <section className="item-flow-card">
+          {step === 0 && (
+            <div className="flow-photo-step">
+              <label className="flow-photo-upload">
+                {form.image ? (
+                  <img src={form.image} />
+                ) : (
+                  <span>
+                    <Camera />
+                    <b>Añadir foto</b>
+                    <small>Cámara o galería</small>
+                  </span>
+                )}
+                <input
+                  hidden
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => image(e.target.files?.[0])}
+                />
+              </label>
+              <div className="flow-step-copy">
+                <p className="eyebrow">PASO 1</p>
+                <h2>Empieza por la foto</h2>
+                <p>Es lo que hará que luego encontrarla y combinarla sea mucho más rápido.</p>
+                <div className="flow-inline-actions">
+                  <label className="btn secondary">
+                    <Upload /> Cambiar foto
+                    <input hidden type="file" accept="image/*" onChange={(e) => image(e.target.files?.[0])} />
+                  </label>
+                  {form.image && (
+                    <Button type="button" variant="ghost" onClick={() => set("image", undefined)}>
+                      Eliminar foto
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {step === 1 && (
+            <div className="flow-fields-step">
+              <div className="flow-step-copy">
+                <p className="eyebrow">PASO 2</p>
+                <h2>Lo esencial</h2>
+                <p>Categoría, color, temporada y ubicación. Sin más ruido.</p>
+              </div>
+              <div className="flow-form-grid">
+                <label>
+                  Categoría *
+                  <select value={form.category || ""} onChange={(e) => set("category", e.target.value)}>
+                    <option value="">Selecciona una</option>
+                    {d.settings.categories.map((x) => <option key={x}>{x}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Subcategoría
+                  <input list="saved-subcategories" value={form.subcategory || ""} onChange={(e) => set("subcategory", e.target.value)} placeholder="Ej. camisa, vaquero..." />
+                </label>
+                <datalist id="saved-subcategories">
+                  {(d.settings.subcategories || []).map((entry) => <option key={entry} value={entry} />)}
+                </datalist>
+                <div className="full">
+                  <span className="field-label">Colores</span>
+                  <div className="chips color-picker flow-chip-grid">
+                    {mergedColorOptions.map((color) => (
+                      <button type="button" className={(form.colors || []).includes(color.name) ? "selected" : ""} onClick={() => toggle("colors", color.name)} key={color.id}>
+                        <i className={normalizeKey(color.name) === "multicolor" ? "multi" : ""} style={{ background: color.hex }} />
+                        {color.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="inline-input color-input flow-add-color">
+                    <input value={colorDraft} onChange={(e) => setColorDraft(e.target.value)} placeholder="Nuevo color" />
+                    <input type="color" value={colorHex} onChange={(e) => setColorHex(e.target.value)} />
+                    <Button type="button" variant="secondary" onClick={addColor}>Añadir color</Button>
+                  </div>
+                </div>
+                <div className="full">
+                  <span className="field-label">Temporadas</span>
+                  <div className="chips">
+                    {d.settings.seasons.map((x) => (
+                      <button type="button" className={(form.season || []).includes(x) ? "selected" : ""} onClick={() => toggle("season", x)} key={x}>{x}</button>
+                    ))}
+                  </div>
+                </div>
+                <label className="full">
+                  Ubicación
+                  <select value={form.spaceId || ""} onChange={(e) => set("spaceId", e.target.value || undefined)}>
+                    <option value="">Sin ubicación asignada</option>
+                    {sortedSpaces(d.spaces).map((space) => (
+                      <option key={space.id} value={space.id}>{spacePathText(space.id, d.spaces)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+          )}
+          {step === 2 && (
+            <div className="flow-fields-step">
+              <div className="flow-step-copy">
+                <p className="eyebrow">PASO 3</p>
+                <h2>Identidad</h2>
+                <p>Nombre sugerido, marca y estado. Lo justo para reconocerla bien.</p>
+              </div>
+              <div className="flow-form-grid">
+                <label className="full">
+                  Nombre sugerido
+                  <input
+                    value={form.name || ""}
+                    onChange={(e) => {
+                      setNameWasManuallyEdited(true);
+                      set("name", e.target.value);
+                    }}
+                    placeholder={suggestedItemName(form) || "Ej. Camisa blanca de Zara"}
                   />
-                  {color.name}
-                </button>
-              ))}
+                  <button className="mini-action" type="button" onClick={applySuggestedName}>
+                    <Sparkles /> Generar nombre
+                  </button>
+                </label>
+                <label>
+                  Marca
+                  <input list="saved-brands" value={form.brand || ""} onChange={(e) => set("brand", e.target.value)} />
+                </label>
+                <datalist id="saved-brands">{(d.settings.brands || []).map((entry) => <option key={entry} value={entry} />)}</datalist>
+                <label>
+                  Tienda
+                  <input list="saved-stores" value={form.store || ""} onChange={(e) => set("store", e.target.value)} />
+                </label>
+                <datalist id="saved-stores">{(d.settings.stores || []).map((entry) => <option key={entry} value={entry} />)}</datalist>
+                <label>
+                  Talla
+                  <input value={form.size || ""} onChange={(e) => set("size", e.target.value)} />
+                </label>
+                <label>
+                  Decisión actual
+                  <select value={form.decisionStatus} onChange={(e) => set("decisionStatus", e.target.value)}>
+                    {Object.entries(decisions).map(([k, v]) => <option value={k} key={k}>{v}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Estado físico
+                  <select value={form.physicalStatus} onChange={(e) => set("physicalStatus", e.target.value)}>
+                    {Object.entries(physical).map(([k, v]) => <option value={k} key={k}>{v}</option>)}
+                  </select>
+                </label>
+              </div>
             </div>
-          </div>
-          <div className="full">
-            <span className="field-label">Temporadas</span>
-            <div className="chips">
-              {d.settings.seasons.map((x) => (
-                <button
-                  type="button"
-                  className={(form.season || []).includes(x) ? "selected" : ""}
-                  onClick={() => toggle("season", x)}
-                  key={x}
-                >
-                  {x}
-                </button>
-              ))}
+          )}
+          {step === 3 && (
+            <div className="flow-review-step">
+              <div className="flow-review-card">
+                <div className="flow-review-photo">
+                  {form.image ? <img src={form.image} /> : <div className="placeholder"><Shirt /></div>}
+                </div>
+                <div>
+                  <p className="eyebrow">LISTA PARA GUARDAR</p>
+                  <h2>{previewName}</h2>
+                  <div className="flow-review-facts">
+                    <span>{form.subcategory || form.category || "Sin categoría"}</span>
+                    <span>{(form.colors || []).join(", ") || "Sin color"}</span>
+                    <span>{selectedSpace}</span>
+                    <span>{decisions[form.decisionStatus || "keep"]}</span>
+                  </div>
+                  <Button type="submit" className="flow-save-btn">
+                    {existing ? "Guardar cambios" : "Guardar en mi armario"}
+                  </Button>
+                  <button type="button" className="flow-optional-link" onClick={() => setOptionalOpen(true)}>
+                    Completar detalles opcionales
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-          <label>
-            ¿Qué quieres hacer?
-            <select
-              value={form.decisionStatus}
-              onChange={(e) => set("decisionStatus", e.target.value)}
-            >
-              {Object.entries(decisions).map(([k, v]) => (
-                <option value={k} key={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Ubicación
-            <select
-              value={form.spaceId || ""}
-              onChange={(e) =>
-                set("spaceId", e.target.value || undefined)
-              }
-            >
-              <option value="">Sin ubicación asignada</option>
-              {sortedSpaces(d.spaces).map((space) => (
-                  <option key={space.id} value={space.id}>
-                    {spacePathText(space.id, d.spaces)}
-                  </option>
-                ))}
-            </select>
-          </label>
-        </FormSection>
-        <FormSection title="Detalles opcionales" collapsible>
-          <label>
-            Subcategoría
-            <input
-              list="saved-subcategories"
-              value={form.subcategory || ""}
-              onChange={(e) => set("subcategory", e.target.value)}
-              placeholder="Opcional"
-            />
-            <datalist id="saved-subcategories">
-              {(d.settings.subcategories || []).map((entry) => (
-                <option key={entry} value={entry} />
-              ))}
-            </datalist>
-          </label>
-          <label>
-            Talla
-            <input
-              value={form.size || ""}
-              onChange={(e) => set("size", e.target.value)}
-            />
-          </label>
-          <label className="full">
-            Etiquetas
-            <div className="chips tag-picker">
-              {uniqueTags.slice(0, 18).map((tag) => (
-                <button
-                  type="button"
-                  className={(form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag)) ? "selected" : ""}
-                  onClick={() =>
-                    set(
-                      "tags",
-                      (form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag))
-                        ? (form.tags || []).filter((entry) => normalizeKey(entry) !== normalizeKey(tag))
-                        : addUnique(form.tags || [], tag),
-                    )
-                  }
-                  key={tag}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-            <div className="inline-input compact">
-              <input
-                value={tagDraft}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addTag();
-                  }
-                }}
-                placeholder="Añadir etiqueta nueva"
-              />
-              <Button type="button" variant="secondary" onClick={() => addTag()}>
-                Añadir
-              </Button>
-            </div>
-          </label>
-          <label>
-            Marca
-            <input
-              list="saved-brands"
-              value={form.brand || ""}
-              onChange={(e) => set("brand", e.target.value)}
-            />
-            <datalist id="saved-brands">
-              {(d.settings.brands || []).map((entry) => (
-                <option key={entry} value={entry} />
-              ))}
-            </datalist>
-          </label>
-          <label>
-            Tienda
-            <input
-              list="saved-stores"
-              value={form.store || ""}
-              onChange={(e) => set("store", e.target.value)}
-            />
-            <datalist id="saved-stores">
-              {(d.settings.stores || []).map((entry) => (
-                <option key={entry} value={entry} />
-              ))}
-            </datalist>
-          </label>
-          <label>
-            Precio original (€)
-            <input
-              type="number"
-              min="0"
-              step=".01"
-              value={form.originalPrice ?? ""}
-              onChange={(e) =>
-                set(
-                  "originalPrice",
-                  e.target.value ? +e.target.value : undefined,
-                )
-              }
-            />
-          </label>
-          <label>
-            Valor estimado (€)
-            <input
-              type="number"
-              min="0"
-              step=".01"
-              value={form.estimatedValue ?? ""}
-              onChange={(e) =>
-                set(
-                  "estimatedValue",
-                  e.target.value ? +e.target.value : undefined,
-                )
-              }
-            />
-          </label>
-          <label>
-            Fecha de compra
-            <input
-              type="date"
-              value={form.purchaseDate || ""}
-              onChange={(e) => set("purchaseDate", e.target.value)}
-            />
-          </label>
-          <label>
-            Estado físico
-            <select
-              value={form.physicalStatus}
-              onChange={(e) => set("physicalStatus", e.target.value)}
-            >
-              {Object.entries(physical).map(([k, v]) => (
-                <option value={k} key={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="full">
-            Algo que quieras recordar
-            <textarea
-              value={form.notes || ""}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="Cómo combinarla, arreglos pendientes..."
-            />
-          </label>
-        </FormSection>
-        <FormSection title="Datos avanzados" intro="Para revisión inteligente, venta y decisiones futuras." collapsible>
-          {form.decisionStatus === "sell" && (
+          )}
+        </section>
+        <details className="flow-optional-panel" open={optionalOpen} onToggle={(e) => setOptionalOpen(e.currentTarget.open)}>
+          <summary>
+            <span>
+              <h2>Detalles opcionales</h2>
+              <p>Compra, notas, etiquetas, revisión inteligente y venta.</p>
+            </span>
+            <b>{optionalOpen ? "Ocultar" : "Mostrar"}</b>
+          </summary>
+          <div className="flow-form-grid">
             <label>
-              Estado en Vinted
-              <select
-                value={form.vintedStatus || "not_listed"}
-                onChange={(e) => set("vintedStatus", e.target.value)}
-              >
-                <option value="not_listed">No subida</option>
-                <option value="listed">Subida</option>
-                <option value="sold">Vendida</option>
+              Precio original (€)
+              <input type="number" min="0" step=".01" value={form.originalPrice ?? ""} onChange={(e) => set("originalPrice", e.target.value ? +e.target.value : undefined)} />
+            </label>
+            <label>
+              Valor estimado (€)
+              <input type="number" min="0" step=".01" value={form.estimatedValue ?? ""} onChange={(e) => set("estimatedValue", e.target.value ? +e.target.value : undefined)} />
+            </label>
+            <label>
+              Fecha de compra
+              <input type="date" value={form.purchaseDate || ""} onChange={(e) => set("purchaseDate", e.target.value)} />
+            </label>
+            <label>
+              Año aproximado
+              <input type="number" min="1990" max={new Date().getFullYear()} value={form.approximatePurchaseYear ?? ""} onChange={(e) => set("approximatePurchaseYear", e.target.value ? +e.target.value : undefined)} />
+            </label>
+            <label>
+              Antigüedad
+              <select value={form.approximateAgeRange || "unknown"} onChange={(e) => set("approximateAgeRange", e.target.value as ApproximateAgeRange)}>
+                {Object.entries(ageRanges).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </select>
             </label>
-          )}
-          <label>
-            Año aproximado de compra
-            <input
-              type="number"
-              min="1990"
-              max={new Date().getFullYear()}
-              value={form.approximatePurchaseYear ?? ""}
-              onChange={(e) =>
-                set(
-                  "approximatePurchaseYear",
-                  e.target.value ? +e.target.value : undefined,
-                )
-              }
-            />
-          </label>
-          <label>
-            Antigüedad aproximada
-            <select
-              value={form.approximateAgeRange || "unknown"}
-              onChange={(e) =>
-                set("approximateAgeRange", e.target.value as ApproximateAgeRange)
-              }
-            >
-              {Object.entries(ageRanges).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            ¿La usabas antes?
-            <select
-              value={form.estimatedPastUse || "unknown"}
-              onChange={(e) =>
-                set("estimatedPastUse", e.target.value as EstimatedPastUse)
-              }
-            >
-              {Object.entries(estimatedUses).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Amor actual
-            <select
-              value={form.currentLoveLevel ?? ""}
-              onChange={(e) =>
-                set(
-                  "currentLoveLevel",
-                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
-                )
-              }
-            >
-              <option value="">Sin indicar</option>
-              {[1, 2, 3, 4, 5].map((x) => (
-                <option key={x} value={x}>
-                  {x}/5
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Queda bien
-            <select
-              value={form.currentFitLevel ?? ""}
-              onChange={(e) =>
-                set(
-                  "currentFitLevel",
-                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
-                )
-              }
-            >
-              <option value="">Sin indicar</option>
-              {[1, 2, 3, 4, 5].map((x) => (
-                <option key={x} value={x}>
-                  {x}/5
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Encaja con tu estilo
-            <select
-              value={form.currentStyleMatch ?? ""}
-              onChange={(e) =>
-                set(
-                  "currentStyleMatch",
-                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
-                )
-              }
-            >
-              <option value="">Sin indicar</option>
-              {[1, 2, 3, 4, 5].map((x) => (
-                <option key={x} value={x}>
-                  {x}/5
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Comodidad
-            <select
-              value={form.comfortLevel ?? ""}
-              onChange={(e) =>
-                set(
-                  "comfortLevel",
-                  e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined,
-                )
-              }
-            >
-              <option value="">Sin indicar</option>
-              {[1, 2, 3, 4, 5].map((x) => (
-                <option key={x} value={x}>
-                  {x}/5
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="full">
-            Motivo de duda
-            <textarea
-              value={form.doubtReason || ""}
-              onChange={(e) => set("doubtReason", e.target.value)}
-              placeholder="Ej. ya no me representa, me aprieta, no sé combinarla..."
-            />
-          </label>
-        </FormSection>
-        <div className="form-actions">
-          <Button variant="secondary" type="button" onClick={() => n(-1)}>
-            Cancelar
+            <label>
+              Uso estimado
+              <select value={form.estimatedPastUse || "unknown"} onChange={(e) => set("estimatedPastUse", e.target.value as EstimatedPastUse)}>
+                {Object.entries(estimatedUses).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </label>
+            <label>
+              Amor actual
+              <select value={form.currentLoveLevel ?? ""} onChange={(e) => set("currentLoveLevel", e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined)}>
+                <option value="">Sin indicar</option>
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{x}/5</option>)}
+              </select>
+            </label>
+            <label>
+              Fit
+              <select value={form.currentFitLevel ?? ""} onChange={(e) => set("currentFitLevel", e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined)}>
+                <option value="">Sin indicar</option>
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{x}/5</option>)}
+              </select>
+            </label>
+            <label>
+              Estilo
+              <select value={form.currentStyleMatch ?? ""} onChange={(e) => set("currentStyleMatch", e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined)}>
+                <option value="">Sin indicar</option>
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{x}/5</option>)}
+              </select>
+            </label>
+            <label>
+              Comodidad
+              <select value={form.comfortLevel ?? ""} onChange={(e) => set("comfortLevel", e.target.value ? (+e.target.value as 1 | 2 | 3 | 4 | 5) : undefined)}>
+                <option value="">Sin indicar</option>
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{x}/5</option>)}
+              </select>
+            </label>
+            {form.decisionStatus === "sell" && (
+              <label>
+                Estado en Vinted
+                <select value={form.vintedStatus || "not_listed"} onChange={(e) => set("vintedStatus", e.target.value)}>
+                  <option value="not_listed">No subida</option>
+                  <option value="listed">Subida</option>
+                  <option value="sold">Vendida</option>
+                </select>
+              </label>
+            )}
+            <label className="full">
+              Etiquetas
+              <div className="chips tag-picker">
+                {uniqueTags.slice(0, 18).map((tag) => (
+                  <button
+                    type="button"
+                    className={(form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag)) ? "selected" : ""}
+                    onClick={() => set("tags", (form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag)) ? (form.tags || []).filter((entry) => normalizeKey(entry) !== normalizeKey(tag)) : addUnique(form.tags || [], tag))}
+                    key={tag}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-input compact">
+                <input value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }} placeholder="Añadir etiqueta nueva" />
+                <Button type="button" variant="secondary" onClick={() => addTag()}>Añadir</Button>
+              </div>
+            </label>
+            <label className="full">
+              Notas
+              <textarea value={form.notes || ""} onChange={(e) => set("notes", e.target.value)} placeholder="Cómo combinarla, arreglos pendientes..." />
+            </label>
+            <label className="full">
+              Motivo de duda
+              <textarea value={form.doubtReason || ""} onChange={(e) => set("doubtReason", e.target.value)} placeholder="Ej. ya no me representa, me aprieta, no sé combinarla..." />
+            </label>
+          </div>
+        </details>
+        <div className="flow-bottom-actions">
+          <Button variant="secondary" type="button" onClick={() => step ? setStep(step - 1) : leave()}>
+            Atrás
           </Button>
-          <Button type="submit">Guardar prenda</Button>
+          {step < 3 ? (
+            <Button type="button" onClick={() => setStep(step + 1)}>
+              Continuar
+            </Button>
+          ) : (
+            <Button type="submit">{existing ? "Guardar cambios" : "Guardar en mi armario"}</Button>
+          )}
         </div>
       </form>
     </>
@@ -4776,6 +4711,7 @@ function TripModal({
     endDate: trip?.endDate || today(),
     type: trip?.type || ("vacation" as Trip["type"]),
     coverImage: trip?.coverImage || "",
+    coverImageUpdatedAt: trip?.coverImageUpdatedAt || "",
     notes: trip?.notes || "",
   });
   const [query, setQuery] = useState(trip?.destinationName || ""),
@@ -4808,6 +4744,7 @@ function TripModal({
       endDate: form.endDate < form.startDate ? form.startDate : form.endDate,
       type: form.type,
       coverImage: form.coverImage || undefined,
+      coverImageUpdatedAt: form.coverImage ? form.coverImageUpdatedAt || stamp : undefined,
       notes: form.notes || undefined,
       createdAt: trip?.createdAt || stamp,
       updatedAt: stamp,
@@ -4903,12 +4840,14 @@ function TripModal({
             hidden
             type="file"
             accept="image/*"
-            onChange={async (e) =>
+            onChange={async (e) => {
+              const coverImage = await compressImage(e.target.files?.[0]);
               setForm({
                 ...form,
-                coverImage: (await compressImage(e.target.files?.[0])) || form.coverImage,
-              })
-            }
+                coverImage: coverImage || form.coverImage,
+                coverImageUpdatedAt: coverImage ? now() : form.coverImageUpdatedAt,
+              });
+            }}
           />
         </label>
         <label>
@@ -5789,7 +5728,6 @@ function TripDetail() {
 
   const stats = tripStats(d, activeTrip);
   const insights = tripUsageInsights(d, activeTrip);
-  const upcoming = activeTrip.endDate >= today();
 
   const groupedPlanned = stats.dates.map((date) => ({
     date,
@@ -5899,9 +5837,10 @@ function TripDetail() {
       {(tab === "summary" || window.innerWidth > 760) && (
         <>
           <section className="travel-prep-summary">
-            <div>
-              <b>{stats.completed}/{stats.totalItems || 0}</b>
+            <div className="travel-prep-main">
+              <b>{stats.totalItems ? Math.round((stats.completed / stats.totalItems) * 100) : 0}%</b>
               <span>maleta preparada</span>
+              <i style={{ width: `${stats.totalItems ? Math.round((stats.completed / stats.totalItems) * 100) : 0}%` }} />
             </div>
             <div>
               <b>{stats.outfitsPlanned}</b>
@@ -5912,7 +5851,7 @@ function TripDetail() {
               <span>días sin look</span>
             </div>
             <div>
-              <b>{upcoming ? "Próximo" : "Pasado"}</b>
+              <b>{tripStatusLabel(activeTrip)}</b>
               <span>{activeTrip.destinationName}</span>
             </div>
           </section>
