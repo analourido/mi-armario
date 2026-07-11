@@ -311,13 +311,25 @@ export interface TripPlannedOutfit extends SyncMeta {
   createdAt: string;
   updatedAt: string;
 }
+export type WardrobeColor = {
+  id: string;
+  name: string;
+  hex: string;
+  family?: string;
+};
 export interface Settings extends SyncMeta {
   id: string;
   categories: string[];
+  subcategories?: string[];
   colors: string[];
+  wardrobeColors?: WardrobeColor[];
   seasons: string[];
   stores: string[];
+  brands?: string[];
+  tags?: string[];
   occasions: string[];
+  eventTypes?: string[];
+  tripTypes?: string[];
   salePlatforms: string[];
   frequentTags?: string[];
   preferredWorkTags?: string[];

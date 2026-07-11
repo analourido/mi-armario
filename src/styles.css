@@ -338,3 +338,39 @@ html,body{overflow-x:hidden}
   .action-menu>div{right:auto;left:0}
   .collapsible-section>summary{padding:17px 0}
 }
+
+.badge{align-items:center;gap:4px}
+.badge svg{width:11px;height:11px}
+.detail-badges span{display:inline-flex;align-items:center;gap:5px}
+.detail-badges svg{width:13px;height:13px;color:#525252}
+.card-indicators{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.card-indicators span{display:inline-flex;align-items:center;gap:3px;color:var(--muted);font-size:8px}
+.card-indicators svg{width:10px;height:10px}
+.color-picker button{display:inline-flex;align-items:center;gap:6px}
+.color-picker i,.color-list i{display:inline-block;width:13px;height:13px;border:1px solid var(--border);border-radius:50%;box-shadow:inset 0 0 0 1px rgba(255,255,255,.45)}
+.color-picker i.multi,.color-list i.multi{background:linear-gradient(135deg,#ef4444,#eab308,#22c55e,#3b82f6,#a855f7)!important}
+.tag-picker{margin-bottom:8px}
+.mini-action{display:inline-flex;align-items:center;gap:5px;width:max-content;border:1px solid var(--border);border-radius:999px;background:#fff;padding:6px 9px;color:#333;font-size:9px;font-weight:750}
+.mini-action svg{width:13px}
+.inline-input.compact{margin-top:0}
+.color-list span{gap:7px}
+.color-input input[type=color]{width:46px;min-width:46px;padding:3px}
+.weather-badge svg{display:block;width:30px;height:30px;margin:0 0 8px auto;color:#444}
+.weather-inline-icon{width:22px;height:22px;margin-bottom:6px;color:#444}
+.context-hero h2{display:flex;align-items:center;gap:8px}
+.context-hero h2 svg{width:25px;height:25px;color:#444}
+.weather-mini{display:inline-flex;align-items:center;gap:5px}
+.weather-mini svg{width:14px;height:14px;color:#555}
+.forecast-pill b{display:flex;align-items:center;gap:5px}
+.forecast-pill b svg{width:14px;height:14px;color:#555}
+.resale-tabs button{display:inline-flex;align-items:center;gap:5px}
+.resale-tabs button svg{width:13px;height:13px}
+.state-line{display:flex;align-items:center;gap:5px}
+.state-line svg{width:12px;height:12px;color:#555}
+
+@media(max-width:760px){
+  .weather-badge{text-align:left}
+  .weather-badge svg{margin-right:auto;margin-left:0}
+  .inline-input.color-input{display:grid;grid-template-columns:1fr 52px;gap:7px}
+  .inline-input.color-input .btn{grid-column:1/-1}
+}

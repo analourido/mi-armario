@@ -29,19 +29,30 @@ import {
 } from "recharts";
 import {
   Archive,
+  AlertCircle,
+  BadgeCheck,
   BarChart3,
   Brain,
   CalendarDays,
   Camera,
   Check,
+  CheckCircle,
   ChevronLeft,
+  CircleHelp,
   CircleDollarSign,
   Clipboard,
   ClipboardList,
   Cloud,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
+  CloudSun,
   Download,
+  FileText,
+  Gift,
   Heart,
   Home,
+  Image as ImageIcon,
   LogIn,
   LogOut,
   Menu,
@@ -56,15 +67,23 @@ import {
   Shirt,
   Shuffle,
   ShoppingBag,
+  Snowflake,
   Sparkles,
+  Star,
   Store,
+  Sun,
+  Tag,
+  Thermometer,
   Luggage,
   Trash2,
   Undo2,
+  Umbrella,
   Upload,
   WalletCards,
   Wifi,
   WifiOff,
+  Wind,
+  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -111,6 +130,7 @@ import type {
   WardrobeEvent,
   WeatherCache,
   WeatherLocation,
+  WardrobeColor,
   WishlistItem,
 } from "./types";
 import {
@@ -151,6 +171,20 @@ const physical: Record<PhysicalStatus, string> = {
   used: "Usado",
   worn: "Gastado",
 };
+const decisionIcons = {
+  keep: Heart,
+  sell: Tag,
+  donate: Gift,
+  maybe: CircleHelp,
+  repair: Wrench,
+} satisfies Record<DecisionStatus, typeof Heart>;
+const physicalIcons = {
+  new: Sparkles,
+  like_new: Star,
+  good: CheckCircle,
+  used: Shirt,
+  worn: AlertCircle,
+} satisfies Record<PhysicalStatus, typeof Shirt>;
 const statusClass: Record<DecisionStatus, string> = {
   keep: "keep",
   sell: "sell",
@@ -183,6 +217,16 @@ const resaleStatuses = {
   withdrawn: "Retirada",
   donated_instead: "Donada al final",
 } as const;
+const resaleIcons = {
+  to_photo: Camera,
+  photos_done: ImageIcon,
+  draft: FileText,
+  listed: Upload,
+  reserved: CalendarDays,
+  sold: BadgeCheck,
+  withdrawn: Archive,
+  donated_instead: Gift,
+} satisfies Record<keyof typeof resaleStatuses, typeof Camera>;
 const resalePipeline = [
   "to_photo",
   "photos_done",
@@ -255,6 +299,112 @@ function buildListingCopy(item: ClothingItem, listing?: ResaleListing) {
     suggestedPrice: priceBase ? Math.round(priceBase) : undefined,
     summary: attrs.join(" · "),
   };
+}
+
+const defaultWardrobeColors: WardrobeColor[] = [
+  { id: "blanco", name: "Blanco", hex: "#FFFFFF", family: "neutro" },
+  { id: "negro", name: "Negro", hex: "#111111", family: "neutro" },
+  { id: "gris", name: "Gris", hex: "#9CA3AF", family: "neutro" },
+  { id: "beige", name: "Beige", hex: "#D8C7B1", family: "neutro" },
+  { id: "marron", name: "Marrón", hex: "#7A5238", family: "tierra" },
+  { id: "azul", name: "Azul", hex: "#3B5F8A", family: "frío" },
+  { id: "vaquero", name: "Vaquero", hex: "#6F8FAF", family: "frío" },
+  { id: "rojo", name: "Rojo", hex: "#B91C1C", family: "cálido" },
+  { id: "rosa", name: "Rosa", hex: "#E8A2B8", family: "cálido" },
+  { id: "verde", name: "Verde", hex: "#4F7A5A", family: "frío" },
+  { id: "amarillo", name: "Amarillo", hex: "#EAB308", family: "cálido" },
+  { id: "naranja", name: "Naranja", hex: "#EA580C", family: "cálido" },
+  { id: "morado", name: "Morado", hex: "#7C3AED", family: "frío" },
+  { id: "multicolor", name: "Multicolor", hex: "#8B5CF6", family: "especial" },
+];
+const normalizeKey = (value: string) =>
+  value
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+const prettyValue = (value: string) => {
+  const clean = value.trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  return clean
+    .split(" ")
+    .map((part) =>
+      part.length <= 3 && part === part.toUpperCase()
+        ? part
+        : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(),
+    )
+    .join(" ");
+};
+function addUnique(list: string[] = [], value?: string) {
+  const clean = prettyValue(value || "");
+  if (!clean) return list;
+  return list.some((entry) => normalizeKey(entry) === normalizeKey(clean))
+    ? list
+    : [...list, clean];
+}
+function addManyUnique(list: string[] = [], values: string[] = []) {
+  return values.reduce((next, value) => addUnique(next, value), list);
+}
+function wardrobeColors(settings?: Settings) {
+  const configured = settings?.wardrobeColors?.length
+    ? settings.wardrobeColors
+    : defaultWardrobeColors;
+  const byName = new Map(configured.map((color) => [normalizeKey(color.name), color]));
+  (settings?.colors || []).forEach((name) => {
+    const key = normalizeKey(name);
+    if (!byName.has(key)) {
+      byName.set(key, {
+        id: key || uid(),
+        name,
+        hex: defaultWardrobeColors.find((color) => normalizeKey(color.name) === key)?.hex || "#D4D4D4",
+      });
+    }
+  });
+  return [...byName.values()];
+}
+function colorValue(c: string, settings?: Settings) {
+  return (
+    wardrobeColors(settings).find((color) => normalizeKey(color.name) === normalizeKey(c))
+      ?.hex || "#c2bab3"
+  );
+}
+function colorLabelForName(color: string, base: string) {
+  const key = normalizeKey(color);
+  const feminine = /\b(chaqueta|camisa|falda|cazadora|americana|sobrecamisa|blusa)\b/i.test(base);
+  const map: Record<string, [string, string]> = {
+    blanco: ["blanco", "blanca"],
+    negro: ["negro", "negra"],
+    rojo: ["rojo", "roja"],
+    amarillo: ["amarillo", "amarilla"],
+    morado: ["morado", "morada"],
+  };
+  return map[key] ? map[key][feminine ? 1 : 0] : color.toLowerCase();
+}
+function suggestedItemName(form: Partial<ClothingItem>) {
+  const base = (form.subcategory || form.category || "").trim();
+  if (!base) return "";
+  const colors = form.colors || [];
+  const color =
+    colors.length > 1
+      ? "multicolor"
+      : colors[0]
+        ? colorLabelForName(colors[0], base)
+        : "";
+  const source = (form.brand || form.store || "").trim();
+  const text = [base.toLowerCase(), color].filter(Boolean).join(" ");
+  return prettyValue(source ? `${text} de ${source}` : text);
+}
+function weatherVisual(weather?: DailyWeatherSummary) {
+  const description = `${weather?.description || ""}`.toLowerCase();
+  if (!weather) return { Icon: CloudSun, label: "Sin clima", hint: "Actualiza el clima para afinar el look." };
+  if (description.includes("tormenta")) return { Icon: CloudLightning, label: "Tormenta", hint: "Capas y calzado cerrado." };
+  if (description.includes("lluv")) return { Icon: CloudRain, label: "Lluvia", hint: "Zapato cerrado y prenda exterior." };
+  if (description.includes("niebla")) return { Icon: CloudFog, label: "Niebla", hint: "Capas suaves y visibilidad." };
+  if (weather.windSpeedMax >= 26) return { Icon: Wind, label: "Viento", hint: "Evita prendas delicadas." };
+  if (weather.temperatureMax < 10) return { Icon: Snowflake, label: "Frío", hint: "Abrigo y zapato cerrado." };
+  if (weather.temperatureMax > 23) return { Icon: Sun, label: "Calor", hint: "Ropa ligera y cómoda." };
+  if (description.includes("nub")) return { Icon: Cloud, label: "Nubes", hint: "Entretiempo cómodo." };
+  return { Icon: CloudSun, label: "Entretiempo", hint: "Look flexible por capas." };
 }
 type ConfidenceLevel = "alto" | "medio" | "bajo";
 type SmartInsight = {
@@ -1845,6 +1995,7 @@ function Dashboard() {
             };
   if (!d.items.length && !d.orders.length && !d.sales.length && !d.wishlist.length)
     return <Welcome onAdd={() => n("/prenda/nueva")} />;
+  const TodayWeatherIcon = weatherVisual(contextOverview.forecast).Icon;
   return (
     <>
       <PageHead eyebrow="HOY" title="Tu armario, hoy">
@@ -1866,7 +2017,8 @@ function Dashboard() {
                 "Añade rutinas o eventos para afinar la recomendación."}
           </p>
         </div>
-        <div className="balance-number">
+        <div className="balance-number weather-badge">
+          <TodayWeatherIcon />
           <span>Balance del mes</span>
           <b>{ins} entradas · {outs} salidas</b>
         </div>
@@ -1922,6 +2074,11 @@ function Dashboard() {
         </div>
         <div className="location-summary-grid">
           <div>
+            {contextOverview.forecast && (() => {
+              const visual = weatherVisual(contextOverview.forecast);
+              const Icon = visual.Icon;
+              return <Icon className="weather-inline-icon" />;
+            })()}
             <b>
               {contextOverview.forecast
                 ? `${Math.round(contextOverview.forecast.temperatureMin)}–${Math.round(contextOverview.forecast.temperatureMax)}°C`
@@ -2272,6 +2429,11 @@ function Wardrobe() {
                 <span
                   className={`badge ${i.isArchived ? "archived-badge" : statusClass[i.decisionStatus]}`}
                 >
+                  {!i.isArchived &&
+                    (() => {
+                      const Icon = decisionIcons[i.decisionStatus];
+                      return <Icon />;
+                    })()}
                   {i.isArchived
                     ? "Fuera del armario"
                     : decisions[i.decisionStatus]}
@@ -2282,6 +2444,16 @@ function Wardrobe() {
                 <p>
                   {i.category} · {uses(i.id)} usos
                 </p>
+                <div className="card-indicators">
+                  <span>
+                    <MapPin /> {i.spaceId ? "Ubicada" : "Sin ubicación"}
+                  </span>
+                  {i.decisionStatus === "sell" && (
+                    <span>
+                      <Tag /> Venta
+                    </span>
+                  )}
+                </div>
                 <small className="item-location">
                   {i.spaceId
                     ? spacePathText(i.spaceId, d.spaces)
@@ -2299,7 +2471,7 @@ function Wardrobe() {
                       <i
                         key={c}
                         title={c}
-                        style={{ background: colorValue(c) }}
+                        style={{ background: colorValue(c, d.settings) }}
                       />
                     ))}
                   </div>
@@ -2328,24 +2500,6 @@ function Wardrobe() {
     </>
   );
 }
-const colorValue = (c: string) =>
-  (
-    ({
-      Negro: "#292727",
-      Blanco: "#f4f1eb",
-      Beige: "#d8c9ad",
-      Marrón: "#795548",
-      Gris: "#999",
-      Azul: "#557a9e",
-      Verde: "#708a72",
-      Rojo: "#a85c58",
-      Rosa: "#d7a8ad",
-      Amarillo: "#d8bc68",
-      Morado: "#8b7195",
-      Naranja: "#c78355",
-    }) as Record<string, string>
-  )[c] || "#c2bab3";
-
 function ItemForm() {
   const { id } = useParams(),
     d = useData(),
@@ -2362,7 +2516,10 @@ function ItemForm() {
   const [form, setForm] = useState<Partial<ClothingItem>>(
       existing || blankItem,
     ),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [nameWasManuallyEdited, setNameWasManuallyEdited] = useState(!!existing?.name),
+    [lastAutoName, setLastAutoName] = useState(""),
+    [tagDraft, setTagDraft] = useState("");
   useEffect(() => {
     if (existing) {
       setForm({
@@ -2373,10 +2530,26 @@ function ItemForm() {
         physicalStatus: existing.physicalStatus || "good",
         decisionStatus: existing.decisionStatus || "keep",
       });
+      setNameWasManuallyEdited(!!existing.name);
+      setLastAutoName("");
     } else if (!id) {
       setForm(blankItem);
+      setNameWasManuallyEdited(false);
+      setLastAutoName("");
     }
   }, [id, existing?.id]);
+  useEffect(() => {
+    const suggested = suggestedItemName(form);
+    if (
+      !id &&
+      !nameWasManuallyEdited &&
+      suggested &&
+      (!form.name || form.name === lastAutoName)
+    ) {
+      setForm((current) => ({ ...current, name: suggested }));
+      setLastAutoName(suggested);
+    }
+  }, [form.category, form.subcategory, form.colors, form.brand, form.store, id, nameWasManuallyEdited, form.name, lastAutoName]);
   if (id && !existing) return <p>Cargando…</p>;
   const set = (k: keyof ClothingItem, v: unknown) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -2387,6 +2560,40 @@ function ItemForm() {
         ? (form[k] || []).filter((x) => x !== v)
         : [...(form[k] || []), v],
     );
+  const savedTags = [
+    ...(d.settings.tags || []),
+    ...(d.settings.frequentTags || []),
+    ...d.items.flatMap((item) => item.tags || []),
+  ].filter(Boolean);
+  const uniqueTags = addManyUnique([], savedTags);
+  const colorOptions = wardrobeColors(d.settings);
+  function applySuggestedName() {
+    const suggested = suggestedItemName(form);
+    if (suggested) {
+      set("name", suggested);
+      setLastAutoName(suggested);
+      setNameWasManuallyEdited(false);
+    }
+  }
+  function addTag(value = tagDraft) {
+    const next = addUnique(form.tags || [], value);
+    set("tags", next);
+    setTagDraft("");
+  }
+  async function persistReusableOptions(item: ClothingItem) {
+    const nextSettings: Settings = {
+      ...d.settings,
+      subcategories: addUnique(d.settings.subcategories || [], item.subcategory),
+      stores: addUnique(d.settings.stores || [], item.store),
+      brands: addUnique(d.settings.brands || [], item.brand),
+      tags: addManyUnique(d.settings.tags || d.settings.frequentTags || [], item.tags || []),
+      frequentTags: addManyUnique(d.settings.frequentTags || [], item.tags || []),
+      colors: addManyUnique(d.settings.colors || [], item.colors || []),
+      seasons: addManyUnique(d.settings.seasons || [], item.season || []),
+      updatedAt: now(),
+    };
+    await db.settings.put(nextSettings);
+  }
   async function image(file?: File) {
     const compressed = await compressImage(file);
     if (compressed) {
@@ -2396,8 +2603,9 @@ function ItemForm() {
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.name?.trim() || !form.category)
-      return setError("Indica un nombre y una categoría.");
+    const finalName = form.name?.trim() || suggestedItemName(form);
+    if (!finalName || !form.category)
+      return setError("Indica un nombre y una categoría, o rellena categoría/color para generarlo.");
     if ((form.originalPrice || 0) < 0 || (form.estimatedValue || 0) < 0)
       return setError("Los precios no pueden ser negativos.");
     const stamp = now();
@@ -2405,7 +2613,7 @@ function ItemForm() {
       ...existing,
       ...form,
       id: existing?.id || uid(),
-      name: form.name.trim(),
+      name: finalName,
       category: form.category,
       colors: form.colors || [],
       season: form.season || [],
@@ -2415,6 +2623,7 @@ function ItemForm() {
       updatedAt: stamp,
     } as ClothingItem;
     await db.clothingItems.put(item);
+    await persistReusableOptions(item);
     n(`/prenda/${item.id}`);
   }
   return (
@@ -2458,9 +2667,15 @@ function ItemForm() {
             Nombre *
             <input
               value={form.name || ""}
-              onChange={(e) => set("name", e.target.value)}
+              onChange={(e) => {
+                setNameWasManuallyEdited(true);
+                set("name", e.target.value);
+              }}
               placeholder="Ej. Camisa de lino"
             />
+            <button className="mini-action" type="button" onClick={applySuggestedName}>
+              <Sparkles /> Generar nombre
+            </button>
           </label>
           <label>
             Categoría *
@@ -2476,15 +2691,19 @@ function ItemForm() {
           </label>
           <div className="full">
             <span className="field-label">Colores</span>
-            <div className="chips">
-              {d.settings.colors.map((x) => (
+            <div className="chips color-picker">
+              {colorOptions.map((color) => (
                 <button
                   type="button"
-                  className={(form.colors || []).includes(x) ? "selected" : ""}
-                  onClick={() => toggle("colors", x)}
-                  key={x}
+                  className={(form.colors || []).includes(color.name) ? "selected" : ""}
+                  onClick={() => toggle("colors", color.name)}
+                  key={color.id}
                 >
-                  {x}
+                  <i
+                    className={normalizeKey(color.name) === "multicolor" ? "multi" : ""}
+                    style={{ background: color.hex }}
+                  />
+                  {color.name}
                 </button>
               ))}
             </div>
@@ -2538,10 +2757,16 @@ function ItemForm() {
           <label>
             Subcategoría
             <input
+              list="saved-subcategories"
               value={form.subcategory || ""}
               onChange={(e) => set("subcategory", e.target.value)}
               placeholder="Opcional"
             />
+            <datalist id="saved-subcategories">
+              {(d.settings.subcategories || []).map((entry) => (
+                <option key={entry} value={entry} />
+              ))}
+            </datalist>
           </label>
           <label>
             Talla
@@ -2552,33 +2777,67 @@ function ItemForm() {
           </label>
           <label className="full">
             Etiquetas
-            <input
-              value={(form.tags || []).join(", ")}
-              onChange={(e) =>
-                set(
-                  "tags",
-                  e.target.value
-                    .split(",")
-                    .map((x) => x.trim())
-                    .filter(Boolean),
-                )
-              }
-              placeholder="oficina, básico, cómodo..."
-            />
+            <div className="chips tag-picker">
+              {uniqueTags.slice(0, 18).map((tag) => (
+                <button
+                  type="button"
+                  className={(form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag)) ? "selected" : ""}
+                  onClick={() =>
+                    set(
+                      "tags",
+                      (form.tags || []).some((entry) => normalizeKey(entry) === normalizeKey(tag))
+                        ? (form.tags || []).filter((entry) => normalizeKey(entry) !== normalizeKey(tag))
+                        : addUnique(form.tags || [], tag),
+                    )
+                  }
+                  key={tag}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+            <div className="inline-input compact">
+              <input
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                placeholder="Añadir etiqueta nueva"
+              />
+              <Button type="button" variant="secondary" onClick={() => addTag()}>
+                Añadir
+              </Button>
+            </div>
           </label>
           <label>
             Marca
             <input
+              list="saved-brands"
               value={form.brand || ""}
               onChange={(e) => set("brand", e.target.value)}
             />
+            <datalist id="saved-brands">
+              {(d.settings.brands || []).map((entry) => (
+                <option key={entry} value={entry} />
+              ))}
+            </datalist>
           </label>
           <label>
             Tienda
             <input
+              list="saved-stores"
               value={form.store || ""}
               onChange={(e) => set("store", e.target.value)}
             />
+            <datalist id="saved-stores">
+              {(d.settings.stores || []).map((entry) => (
+                <option key={entry} value={entry} />
+              ))}
+            </datalist>
           </label>
           <label>
             Precio original (€)
@@ -2911,9 +3170,19 @@ function ItemDetail() {
           <h1>{item.name}</h1>
           <div className="detail-badges">
             <span className={`badge ${item.decisionStatus}`}>
+              {(() => {
+                const Icon = decisionIcons[item.decisionStatus];
+                return <Icon />;
+              })()}
               {decisions[item.decisionStatus]}
             </span>
-            <span>{physical[item.physicalStatus]}</span>
+            <span>
+              {(() => {
+                const Icon = physicalIcons[item.physicalStatus];
+                return <Icon />;
+              })()}
+              {physical[item.physicalStatus]}
+            </span>
             {item.soldAt && <span>Vendida el {dateFmt(item.soldAt)}</span>}
           </div>
           <div className="detail-actions">
@@ -4301,7 +4570,12 @@ function TripCard({
           <span>{stats.outfitsPlanned} outfits</span>
           <span>{stats.daysWithoutOutfit} días sin look</span>
           {forecast && (
-            <span>
+            <span className="weather-mini">
+              {(() => {
+                const visual = weatherVisual(forecast);
+                const Icon = visual.Icon;
+                return <Icon />;
+              })()}
               {forecast.description} · {Math.round(forecast.temperatureMin)}–{Math.round(forecast.temperatureMax)}°C
             </span>
           )}
@@ -5066,7 +5340,14 @@ function TripDetail() {
                 <div className="forecast-strip">
                   {forecast.slice(0, tripLength(currentTrip)).map((day) => (
                     <div className="forecast-pill" key={day.date}>
-                      <b>{dayLabel(day.date).slice(0, 3)}</b>
+                      <b>
+                        {(() => {
+                          const visual = weatherVisual(day);
+                          const Icon = visual.Icon;
+                          return <Icon />;
+                        })()}
+                        {dayLabel(day.date).slice(0, 3)}
+                      </b>
                       <span>{Math.round(day.temperatureMin)}–{Math.round(day.temperatureMax)}°C</span>
                       <small>{day.description}</small>
                     </div>
@@ -5494,10 +5775,17 @@ function WhatToWearPage() {
       <section className="panel context-hero">
         <div>
           <p className="eyebrow">UBICACIÓN ACTIVA</p>
-          <h2>{location.name}</h2>
+          <h2>
+            {forecast[0] && (() => {
+              const visual = weatherVisual(forecast[0]);
+              const Icon = visual.Icon;
+              return <Icon />;
+            })()}
+            {location.name}
+          </h2>
           <p className="muted">
             {forecast[0]
-              ? `${forecast[0].description} · ${Math.round(forecast[0].temperatureMin)}–${Math.round(forecast[0].temperatureMax)}°C`
+              ? `${Math.round(forecast[0].temperatureMin)}–${Math.round(forecast[0].temperatureMax)}°C · ${forecast[0].description} · ${weatherVisual(forecast[0]).hint}`
               : "En cuanto tengamos clima descargado afinaremos mejor las recomendaciones."}
           </p>
         </div>
@@ -5521,9 +5809,18 @@ function WhatToWearPage() {
                 <h2>{dateFmt(day.date)}</h2>
               </div>
               <small className="muted" style={{ margin: 0 }}>
-                {day.weather
-                  ? `${day.weather.description} · ${Math.round(day.weather.temperatureMin)}–${Math.round(day.weather.temperatureMax)}°C`
-                  : "Sin clima descargado"}
+                {day.weather ? (
+                  <span className="weather-mini">
+                    {(() => {
+                      const visual = weatherVisual(day.weather);
+                      const Icon = visual.Icon;
+                      return <Icon />;
+                    })()}
+                    {`${Math.round(day.weather.temperatureMin)}–${Math.round(day.weather.temperatureMax)}°C · ${day.weather.description}`}
+                  </span>
+                ) : (
+                  "Sin clima descargado"
+                )}
               </small>
             </div>
             <div className="recommendation-grid">
@@ -7350,6 +7647,10 @@ function ResalePlan() {
             onClick={() => setTab(status)}
             key={status}
           >
+            {(() => {
+              const Icon = resaleIcons[status];
+              return <Icon />;
+            })()}
             {resaleStatuses[status]} <b>{byStatus(status).length}</b>
           </button>
         ))}
@@ -7374,7 +7675,13 @@ function ResalePlan() {
                       <ItemThumb item={item!} />
                       <div>
                         <h3>{item!.name}</h3>
-                        <p>{listing.platform} · {resaleStatuses[listing.status]}</p>
+                        <p className="state-line">
+                          {(() => {
+                            const Icon = resaleIcons[listing.status];
+                            return <Icon />;
+                          })()}
+                          {listing.platform} · {resaleStatuses[listing.status]}
+                        </p>
                         <small>
                           {listing.status === "listed"
                             ? `${resaleAge(listing)} días subida`
@@ -8383,32 +8690,79 @@ function SettingsPage() {
 }
 function ListSettings({ settings }: { settings: Settings }) {
   const [tab, setTab] = useState<
-      "categories" | "colors" | "stores" | "occasions" | "frequentTags"
+      | "categories"
+      | "subcategories"
+      | "colors"
+      | "stores"
+      | "brands"
+      | "occasions"
+      | "frequentTags"
+      | "salePlatforms"
     >("categories"),
-    [value, setValue] = useState("");
+    [value, setValue] = useState(""),
+    [colorName, setColorName] = useState(""),
+    [colorHex, setColorHex] = useState("#9CA3AF");
   const labels = {
     categories: "Categorías",
+    subcategories: "Subcategorías",
     colors: "Colores",
     stores: "Tiendas",
+    brands: "Marcas",
     occasions: "Ocasiones",
     frequentTags: "Etiquetas",
+    salePlatforms: "Venta",
   };
-  const values = settings[tab] || [];
+  const values = (settings[tab] || []) as string[];
   async function replace(values: string[]) {
-    await db.settings.put({ ...settings, [tab]: values });
+    await db.settings.put({ ...settings, [tab]: values, updatedAt: now() });
   }
   async function add() {
-    const v = value.trim();
-    if (!v || values.includes(v)) return;
-    await replace([...values, v]);
+    const v = prettyValue(value);
+    if (!v) return;
+    await replace(addUnique(values, v));
     setValue("");
   }
   async function remove(v: string) {
-    await replace(values.filter((x) => x !== v));
+    await replace(values.filter((x) => normalizeKey(x) !== normalizeKey(v)));
+  }
+  async function addColor() {
+    const name = prettyValue(colorName);
+    if (!name) return;
+    const nextColors = addUnique(settings.colors || [], name);
+    const nextWardrobeColors = [
+      ...wardrobeColors(settings).filter(
+        (color) => normalizeKey(color.name) !== normalizeKey(name),
+      ),
+      {
+        id: normalizeKey(name) || uid(),
+        name,
+        hex: colorHex,
+      },
+    ];
+    await db.settings.put({
+      ...settings,
+      colors: nextColors,
+      wardrobeColors: nextWardrobeColors,
+      updatedAt: now(),
+    });
+    setColorName("");
+    setColorHex("#9CA3AF");
+  }
+  async function removeColor(name: string) {
+    await db.settings.put({
+      ...settings,
+      colors: (settings.colors || []).filter(
+        (entry) => normalizeKey(entry) !== normalizeKey(name),
+      ),
+      wardrobeColors: wardrobeColors(settings).filter(
+        (entry) => normalizeKey(entry.name) !== normalizeKey(name),
+      ),
+      updatedAt: now(),
+    });
   }
   return (
     <section className="panel full-span">
-      <h2>Listas personales</h2>
+      <h2>Listas y etiquetas</h2>
       <div className="small-tabs">
         {(Object.keys(labels) as (keyof typeof labels)[]).map((k) => (
           <button
@@ -8420,29 +8774,69 @@ function ListSettings({ settings }: { settings: Settings }) {
           </button>
         ))}
       </div>
-      <div className="editable-list">
-        {values.map((x) => (
-          <span key={x}>
-            {x}
-            <button onClick={() => remove(x)}>
-              <X />
-            </button>
-          </span>
-        ))}
-      </div>
-      <div className="inline-input">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") add();
-          }}
-          placeholder={`Añadir a ${labels[tab].toLowerCase()}`}
-        />
-        <Button onClick={add}>
-          <Plus /> Añadir
-        </Button>
-      </div>
+      {tab === "colors" ? (
+        <>
+          <div className="editable-list color-list">
+            {wardrobeColors(settings).map((color) => (
+              <span key={color.id}>
+                <i
+                  className={normalizeKey(color.name) === "multicolor" ? "multi" : ""}
+                  style={{ background: color.hex }}
+                />
+                {color.name}
+                <button onClick={() => removeColor(color.name)}>
+                  <X />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="inline-input color-input">
+            <input
+              value={colorName}
+              onChange={(e) => setColorName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addColor();
+              }}
+              placeholder="Nombre del color"
+            />
+            <input
+              type="color"
+              value={colorHex}
+              onChange={(e) => setColorHex(e.target.value)}
+              aria-label="Color"
+            />
+            <Button onClick={addColor}>
+              <Plus /> Añadir color
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="editable-list">
+            {values.map((x) => (
+              <span key={x}>
+                {x}
+                <button onClick={() => remove(x)}>
+                  <X />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="inline-input">
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") add();
+              }}
+              placeholder={`Añadir a ${labels[tab].toLowerCase()}`}
+            />
+            <Button onClick={add}>
+              <Plus /> Añadir
+            </Button>
+          </div>
+        </>
+      )}
     </section>
   );
 }
