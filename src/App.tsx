@@ -1955,6 +1955,7 @@ function Dashboard() {
   const latest = [...activeItems]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 4);
+  const heroPreviewItems = latest.slice(0, 3);
   const upcomingTripStats = upcomingTrip ? tripStats(d, upcomingTrip) : undefined;
   const upcomingTripForecast = upcomingTrip
     ? tripForecast(d.weatherCache, upcomingTrip.id)[0]
@@ -2017,9 +2018,25 @@ function Dashboard() {
                 "Añade rutinas o eventos para afinar la recomendación."}
           </p>
         </div>
-        <div className="balance-number weather-badge">
-          <TodayWeatherIcon />
-          <span>Balance del mes</span>
+        <div className="hero-visual">
+          <div className="hero-weather">
+            <TodayWeatherIcon />
+            <span>Balance del mes</span>
+          </div>
+          {heroPreviewItems.length ? (
+            <div className="hero-preview-strip" aria-label="Prendas recientes">
+              {heroPreviewItems.map((item) => (
+                <div key={item.id}>
+                  <ItemThumb item={item} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="hero-empty-visual" aria-hidden="true">
+              <Shirt />
+              <Sparkles />
+            </div>
+          )}
           <b>{ins} entradas · {outs} salidas</b>
         </div>
       </section>

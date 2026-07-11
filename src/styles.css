@@ -374,3 +374,66 @@ html,body{overflow-x:hidden}
   .inline-input.color-input{display:grid;grid-template-columns:1fr 52px;gap:7px}
   .inline-input.color-input .btn{grid-column:1/-1}
 }
+
+/* Dirección de arte: más presencia visual, menos ruido */
+@keyframes page-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes soft-pop{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
+@keyframes sheet-up{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+
+main>*{animation:page-rise 360ms ease both}
+.panel,.item-card,.outfit,.space-card,.trip-card,.resale-card,.context-card,.wish-grid article,.order-grid>article,.records article,.trip-day-card,.stat,.quick-links>a{transition:border-color 180ms ease,box-shadow 180ms ease,transform 180ms ease,background 180ms ease}
+.panel:hover,.space-card:hover,.trip-card:hover,.resale-card:hover,.context-card:hover,.wish-grid article:hover,.order-grid>article:hover,.records article:hover,.trip-day-card:hover,.quick-links>a:hover{border-color:#dedbd8;box-shadow:0 16px 40px rgba(17,17,17,.055);transform:translateY(-1px)}
+.item-card:hover .item-photo,.outfit:hover,.stat:hover{box-shadow:0 14px 34px rgba(17,17,17,.055)}
+.btn,.icon-btn,.tabs button,.archive-toggle button,.chips button,.resale-tabs button,.rail-track>button,.action-menu button{transition:background 180ms ease,border-color 180ms ease,color 180ms ease,box-shadow 180ms ease,transform 180ms ease}
+.btn:active,.icon-btn:active,.quick-links>a:active,.item-card:active,.outfit-open:active,.rail-track>button:active{transform:scale(.985)}
+
+.hero{position:relative;overflow:hidden;background:radial-gradient(circle at 85% 18%,#f1f1ef 0 0,transparent 120px),linear-gradient(135deg,#fff 0%,#fff 54%,#f8f8f6 100%)}
+.hero:after{content:"";position:absolute;right:-70px;bottom:-90px;width:240px;height:240px;border-radius:50%;background:rgba(17,17,17,.035);pointer-events:none}
+.hero>div:first-child{position:relative;z-index:1;max-width:660px}
+.hero-visual{position:relative;z-index:1;display:grid;justify-items:end;gap:10px;min-width:220px}
+.hero-weather{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:10px;font-weight:700}
+.hero-weather svg{width:28px;height:28px;color:#3d3d3d}
+.hero-preview-strip{display:flex;align-items:end;justify-content:flex-end;min-height:88px}
+.hero-preview-strip>div{overflow:hidden;width:74px;height:90px;margin-left:-14px;border:1px solid rgba(231,229,228,.9);border-radius:17px;background:rgba(255,255,255,.82);box-shadow:0 14px 30px rgba(17,17,17,.08);backdrop-filter:blur(10px);animation:soft-pop 420ms ease both}
+.hero-preview-strip>div:nth-child(2){margin-bottom:-6px;animation-delay:45ms}
+.hero-preview-strip>div:nth-child(3){animation-delay:90ms}
+.hero-preview-strip img,.hero-preview-strip .placeholder{width:100%;height:100%;object-fit:contain;background:transparent}
+.hero-empty-visual{display:grid;grid-template-columns:1fr 1fr;place-items:center;width:128px;height:86px;border:1px solid var(--border-soft);border-radius:20px;background:rgba(255,255,255,.75);box-shadow:0 14px 30px rgba(17,17,17,.06)}
+.hero-empty-visual svg{width:28px;color:#555}
+.hero-visual>b{font-size:16px;letter-spacing:-.035em}
+
+.placeholder{position:relative;overflow:hidden;background:linear-gradient(145deg,#f7f7f5,#eeeeeb);color:#9b9b96}
+.placeholder:before{content:"";position:absolute;inset:12%;border:1px solid rgba(255,255,255,.75);border-radius:inherit;pointer-events:none}
+.placeholder svg{position:relative;z-index:1;filter:drop-shadow(0 6px 12px rgba(17,17,17,.06))}
+.item-photo img,.space-photo img,.space-hero-photo img,.outfit-collage img,.latest-strip img,.recommendation-strip img,.rail-track img,.trip-planned-thumbs img,.packing-thumb img,.worn-gallery img{transition:transform 280ms ease,filter 280ms ease}
+.item-card:hover .item-photo img,.space-card:hover .space-photo img,.outfit:hover .outfit-collage img,.latest-strip a:hover img,.recommendation-strip a:hover img,.rail-track>button:hover img{transform:scale(1.035);filter:drop-shadow(0 10px 12px rgba(17,17,17,.08))}
+.item-photo,.outfit-collage,.space-photo,.space-hero-photo,.worn-gallery img,.trip-planned-thumbs img{position:relative;isolation:isolate}
+.item-photo:after,.outfit-collage:after,.space-photo:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(17,17,17,.03));opacity:0;transition:opacity 200ms ease;pointer-events:none}
+.item-card:hover .item-photo:after,.outfit:hover .outfit-collage:after,.space-card:hover .space-photo:after{opacity:1}
+
+.outfit-collage,.preview-stack,.rail-track>button img,.rail-track>button .placeholder{background:linear-gradient(145deg,#f8f8f6,#efefec)}
+.preview-stack{box-shadow:inset 0 0 0 1px rgba(255,255,255,.7)}
+.preview-slot.filled img{animation:soft-pop 240ms ease both}
+.rail-track>button.selected{box-shadow:0 12px 28px rgba(17,17,17,.09)}
+.rail-track>button.selected:after{content:"";position:absolute;inset:5px;border:1px solid rgba(17,17,17,.08);border-radius:12px;pointer-events:none}
+.outfit-rail>header p,.builder-head h1,.page-head h1{letter-spacing:-.055em}
+
+.modal-backdrop{animation:soft-pop 180ms ease both}
+.modal{animation:sheet-up 220ms ease both}
+details[open]>.daily-more-content,details[open]>.form-grid,details[open]>div{animation:page-rise 220ms ease both}
+.tabs button.active,.archive-toggle button.active,.resale-tabs button.active,.small-tabs button.active{box-shadow:0 6px 18px rgba(17,17,17,.055)}
+.wear-thumbs,.sell-row,.order-items,.rail-track,.archive-toggle,.tabs{scroll-behavior:smooth}
+
+@media(max-width:760px){
+  .hero{display:grid;gap:18px}
+  .hero-visual{justify-items:start;min-width:0}
+  .hero-preview-strip{justify-content:flex-start;width:100%;min-height:76px}
+  .hero-preview-strip>div{width:62px;height:76px;margin-left:0;margin-right:-10px;border-radius:15px}
+  .hero-visual>b{font-size:13px}
+  .panel:hover,.space-card:hover,.trip-card:hover,.resale-card:hover,.context-card:hover,.wish-grid article:hover,.order-grid>article:hover,.records article:hover,.trip-day-card:hover,.quick-links>a:hover{box-shadow:none;transform:none}
+  .item-card:hover .item-photo img,.space-card:hover .space-photo img,.outfit:hover .outfit-collage img,.latest-strip a:hover img,.recommendation-strip a:hover img,.rail-track>button:hover img{transform:none}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
+}
