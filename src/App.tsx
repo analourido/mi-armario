@@ -130,6 +130,7 @@ import type {
   WardrobeEvent,
   WeatherCache,
   WeatherLocation,
+  WearLog,
   WardrobeColor,
   WishlistItem,
 } from "./types";
@@ -1996,87 +1997,39 @@ function Dashboard() {
             };
   if (!d.items.length && !d.orders.length && !d.sales.length && !d.wishlist.length)
     return <Welcome onAdd={() => n("/prenda/nueva")} />;
-  const TodayWeatherIcon = weatherVisual(contextOverview.forecast).Icon;
   return (
-    <>
-      <PageHead eyebrow="HOY" title="Tu armario, hoy">
-        <Button onClick={() => n("/prenda/nueva")}>
-          <Plus /> Añadir prenda
-        </Button>
-      </PageHead>
-      <section className="hero">
-        <div>
-          <p className="eyebrow">RECOMENDACIÓN DE HOY</p>
-          <h2>
-            {contextOverview.recommendation?.context.title ||
-              "Elige algo cómodo y fácil de repetir"}
-          </h2>
-          <p>
-            {contextOverview.forecast
-              ? `${contextOverview.location.name} · ${Math.round(contextOverview.forecast.temperatureMin)}–${Math.round(contextOverview.forecast.temperatureMax)}°C · ${contextOverview.forecast.description}`
-              : contextOverview.recommendation?.reasons[0] ||
-                "Añade rutinas o eventos para afinar la recomendación."}
-          </p>
-        </div>
-        <div className="hero-visual">
-          <div className="hero-weather">
-            <TodayWeatherIcon />
-            <span>Balance del mes</span>
+    <div className="home-magazine">
+      <HomeHero
+        forecast={contextOverview.forecast}
+        locationName={contextOverview.location.name}
+        title={contextOverview.recommendation?.context.title || "Tu armario, listo para hoy"}
+        reason={
+          contextOverview.recommendation?.reasons[0] ||
+          contextOverview.forecast?.description ||
+          "Una portada simple para entrar, decidir y seguir con el día."
+        }
+        previewItems={heroPreviewItems}
+        balanceText={`${ins} entradas · ${outs} salidas este mes`}
+        onPrimary={() => n("/prenda/nueva")}
+      />
+      <QuickActions />
+      <TodaySuggestion notice={dailyNotice} />
+      <section className="home-visual-section">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">RECIÉN LLEGADAS</p>
+            <h2>Últimas prendas</h2>
           </div>
-          {heroPreviewItems.length ? (
-            <div className="hero-preview-strip" aria-label="Prendas recientes">
-              {heroPreviewItems.map((item) => (
-                <div key={item.id}>
-                  <ItemThumb item={item} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="hero-empty-visual" aria-hidden="true">
-              <Shirt />
-              <Sparkles />
-            </div>
-          )}
-          <b>{ins} entradas · {outs} salidas</b>
+          <NavLink to="/armario">Ver armario</NavLink>
         </div>
-      </section>
-      <div className="quick-links">
-        <NavLink to="/prenda/nueva">
-          <Plus />
-          <span>
-            <b>Añadir prenda</b>
-            <small>Foto y datos básicos</small>
-          </span>
-        </NavLink>
-        <NavLink to="/usos">
-          <CalendarDays />
-          <span>
-            <b>Registrar uso</b>
-            <small>Lo que llevas hoy</small>
-          </span>
-        </NavLink>
-        <NavLink to="/outfits/crear">
-          <Heart />
-          <span>
-            <b>Crear outfit</b>
-            <small>Componer un look</small>
-          </span>
-        </NavLink>
-        <NavLink to="/armario">
-          <Search />
-          <span>
-            <b>Buscar prenda</b>
-            <small>Ir al armario</small>
-          </span>
-        </NavLink>
-      </div>
-      <section className="panel daily-notice">
-        <div>
-          <p className="eyebrow">AVISO ÚTIL</p>
-          <h2>{dailyNotice.title}</h2>
-          <p>{dailyNotice.text}</p>
+        <div className="home-latest-gallery">
+          {latest.map((item) => (
+            <NavLink to={`/prenda/${item.id}`} key={item.id}>
+              <ItemThumb item={item} />
+              <span>{item.name}</span>
+            </NavLink>
+          ))}
         </div>
-        <NavLink to={dailyNotice.to}>{dailyNotice.action}</NavLink>
       </section>
       <details className="daily-more">
         <summary>Más módulos y resumen avanzado</summary>
@@ -2264,7 +2217,7 @@ function Dashboard() {
       </div>
         </div>
       </details>
-    </>
+    </div>
   );
 }
 function Welcome({ onAdd }: { onAdd: () => void }) {
@@ -2314,6 +2267,440 @@ function ItemThumb({ item }: { item: ClothingItem }) {
     </div>
   );
 }
+
+function MoreActionsMenu({ children }: { children: ReactNode }) {
+  return (
+    <details className="action-menu more-actions-menu">
+      <summary aria-label="Más acciones">
+        <Menu />
+      </summary>
+      <div>{children}</div>
+    </details>
+  );
+}
+
+function OutfitVisualPreview({
+  outfit,
+  items,
+  large = false,
+}: {
+  outfit?: Outfit;
+  items: ClothingItem[];
+  large?: boolean;
+}) {
+  const realPhoto = outfit?.wornPhoto || outfit?.wornPhotos?.[0];
+  const outfitItems = outfit
+    ? outfit.clothingItemIds
+        .map((id) => items.find((entry) => entry.id === id))
+        .filter(Boolean)
+        .slice(0, realPhoto ? 2 : 4) as ClothingItem[]
+    : items.slice(0, 4);
+  return (
+    <div className={`outfit-visual-preview ${large ? "large" : ""} ${realPhoto ? "has-real-photo" : ""}`}>
+      {realPhoto ? <img className="outfit-real-cover" src={realPhoto} alt="" /> : null}
+      <div className="outfit-mini-collage">
+        {outfitItems.map((item) => (
+          <ItemThumb key={item.id} item={item} />
+        ))}
+        {!outfitItems.length && (
+          <div className="placeholder">
+            <Heart />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HomeHero({
+  forecast,
+  locationName,
+  title,
+  reason,
+  previewItems,
+  balanceText,
+  onPrimary,
+}: {
+  forecast?: DailyWeatherSummary;
+  locationName: string;
+  title: string;
+  reason: string;
+  previewItems: ClothingItem[];
+  balanceText: string;
+  onPrimary: () => void;
+}) {
+  const weather = weatherVisual(forecast);
+  const WeatherIcon = weather.Icon;
+  return (
+    <section className="home-cover">
+      <div className="home-cover-copy">
+        <p className="eyebrow">MI VESTIDOR</p>
+        <h1>{title}</h1>
+        <p>{reason}</p>
+        <div className="home-cover-weather">
+          <WeatherIcon />
+          <span>
+            {forecast
+              ? `${locationName} · ${Math.round(forecast.temperatureMin)}–${Math.round(forecast.temperatureMax)}°C`
+              : weather.hint}
+          </span>
+        </div>
+        <Button onClick={onPrimary}>
+          <Plus /> Añadir prenda
+        </Button>
+      </div>
+      <div className="home-cover-visual">
+        {previewItems.length ? (
+          <div className="home-cover-stack">
+            {previewItems.slice(0, 4).map((item) => (
+              <NavLink to={`/prenda/${item.id}`} key={item.id}>
+                <ItemThumb item={item} />
+              </NavLink>
+            ))}
+          </div>
+        ) : (
+          <div className="home-cover-empty">
+            <Shirt />
+            <Sparkles />
+          </div>
+        )}
+        <small>{balanceText}</small>
+      </div>
+    </section>
+  );
+}
+
+function QuickActions() {
+  return (
+    <section className="quick-actions-strip" aria-label="Acciones rápidas">
+      <NavLink to="/usos">
+        <CalendarDays />
+        <span>Registrar uso</span>
+      </NavLink>
+      <NavLink to="/outfits/crear">
+        <Heart />
+        <span>Crear look</span>
+      </NavLink>
+      <NavLink to="/armario">
+        <Search />
+        <span>Buscar</span>
+      </NavLink>
+      <NavLink to="/que-ponerme">
+        <CloudSun />
+        <span>Qué ponerme</span>
+      </NavLink>
+    </section>
+  );
+}
+
+function TodaySuggestion({ notice }: { notice: { title: string; text: string; to: string; action: string } }) {
+  return (
+    <section className="today-suggestion">
+      <div>
+        <p className="eyebrow">AHORA MISMO</p>
+        <h2>{notice.title}</h2>
+        <p>{notice.text}</p>
+      </div>
+      <NavLink to={notice.to}>{notice.action}</NavLink>
+    </section>
+  );
+}
+
+function VisualWardrobeCard({
+  item,
+  settings,
+}: {
+  item: ClothingItem;
+  settings: Settings;
+}) {
+  const StatusIcon = decisionIcons[item.decisionStatus];
+  return (
+    <NavLink
+      className={`visual-wardrobe-card ${item.isArchived ? "archived" : ""}`}
+      to={`/prenda/${item.id}`}
+    >
+      <div className="visual-wardrobe-photo">
+        <ItemThumb item={item} />
+        <span className={`badge ${item.isArchived ? "archived-badge" : statusClass[item.decisionStatus]}`}>
+          {!item.isArchived && <StatusIcon />}
+          {item.isArchived ? "Archivada" : decisions[item.decisionStatus]}
+        </span>
+      </div>
+      <div className="visual-wardrobe-copy">
+        <h3>{item.name}</h3>
+        <p>{item.subcategory || item.category}</p>
+        <div className="color-dots">
+          {item.colors.slice(0, 4).map((color) => (
+            <i
+              key={color}
+              title={color}
+              style={{ background: colorValue(color, settings) }}
+            />
+          ))}
+        </div>
+      </div>
+    </NavLink>
+  );
+}
+
+function ClothingProductDetail({
+  item,
+  data,
+  logs,
+  smart,
+  onBack,
+  onWorn,
+  onEdit,
+  onReview,
+  onVinted,
+  onRemove,
+}: {
+  item: ClothingItem;
+  data: Data;
+  logs: WearLog[];
+  smart: ReturnType<typeof smartItemScore>;
+  onBack: () => void;
+  onWorn: () => void;
+  onEdit: () => void;
+  onReview: () => void;
+  onVinted: () => void;
+  onRemove: () => void;
+}) {
+  const DecisionIcon = decisionIcons[item.decisionStatus];
+  const PhysicalIcon = physicalIcons[item.physicalStatus];
+  return (
+    <article className="product-detail">
+      <button className="back product-back" onClick={onBack}>
+        <ChevronLeft /> Volver
+      </button>
+      <section className="product-hero">
+        <div className="product-photo">
+          <ItemThumb item={item} />
+          <span className={`badge ${item.decisionStatus}`}>
+            <DecisionIcon /> {decisions[item.decisionStatus]}
+          </span>
+        </div>
+        <div className="product-summary">
+          {item.isArchived && (
+            <div className="archive-notice">
+              <Archive />
+              <span>
+                <b>Fuera del armario</b>
+                <small>
+                  {item.archiveReason ? exitLabels[item.archiveReason] : "Archivada"} · {dateFmt(item.archivedAt)}
+                </small>
+              </span>
+              <button
+                onClick={() =>
+                  db.clothingItems.update(item.id, {
+                    isArchived: false,
+                    archivedAt: undefined,
+                    archiveReason: undefined,
+                    updatedAt: now(),
+                  })
+                }
+              >
+                Restaurar
+              </button>
+            </div>
+          )}
+          <p className="eyebrow">
+            {item.category}
+            {item.subcategory && ` · ${item.subcategory}`}
+          </p>
+          <h1>{item.name}</h1>
+          <div className="product-meta-row">
+            <span>
+              <PhysicalIcon /> {physical[item.physicalStatus]}
+            </span>
+            {item.brand && <span>{item.brand}</span>}
+            {item.size && <span>Talla {item.size}</span>}
+          </div>
+          <div className="product-primary-actions">
+            <Button onClick={onWorn}>
+              <Plus /> Usada hoy
+            </Button>
+            <MoreActionsMenu>
+              <button onClick={onEdit}>
+                <Pencil /> Editar
+              </button>
+              <button onClick={onReview}>
+                <Brain /> Revisar prenda
+              </button>
+              {item.decisionStatus === "sell" && !item.isArchived && (
+                <button onClick={onVinted}>
+                  <Clipboard /> Anuncio Vinted
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  db.clothingItems.update(item.id, {
+                    decisionStatus: "sell",
+                    updatedAt: now(),
+                  })
+                }
+              >
+                <Store /> Marcar para vender
+              </button>
+              <button
+                onClick={() =>
+                  db.clothingItems.update(item.id, {
+                    decisionStatus: "donate",
+                    updatedAt: now(),
+                  })
+                }
+              >
+                <Gift /> Marcar para donar
+              </button>
+              <button
+                onClick={() =>
+                  db.clothingItems.update(item.id, {
+                    isArchived: true,
+                    archivedAt: today(),
+                    archiveReason: "discarded",
+                    updatedAt: now(),
+                  })
+                }
+              >
+                <Archive /> Archivar
+              </button>
+              <button className="danger" onClick={onRemove}>
+                <Trash2 /> Eliminar
+              </button>
+            </MoreActionsMenu>
+          </div>
+          <div className="product-color-row">
+            {item.colors.map((color) => (
+              <i
+                key={color}
+                title={color}
+                style={{ background: colorValue(color, data.settings) }}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+      <section className="product-story">
+        <div className="product-statline">
+          <Stat label="Usos" value={logs.length} />
+          <Stat label="Último uso" value={logs[0] ? dateFmt(logs[0].date) : "Sin usos"} />
+          <Stat
+            label="Coste/uso"
+            value={
+              item.originalPrice
+                ? logs.length
+                  ? money(item.originalPrice / logs.length)
+                  : "Sin usos"
+                : "Sin precio"
+            }
+          />
+          <Stat label="Revisión" value={`${smart.confidenceScore}%`} />
+        </div>
+        <div className="product-info-panel">
+          <div>
+            <p className="eyebrow">UBICACIÓN</p>
+            {item.spaceId ? (
+              <NavLink to={`/espacios/${item.spaceId}`}>
+                <MapPin /> {spacePathText(item.spaceId, data.spaces)}
+              </NavLink>
+            ) : (
+              <p>Sin ubicación asignada</p>
+            )}
+          </div>
+          <div>
+            <p className="eyebrow">TEMPORADA</p>
+            <p>{item.season.join(", ") || "Sin temporada"}</p>
+          </div>
+          <div>
+            <p className="eyebrow">ETIQUETAS</p>
+            <p>{item.tags?.join(", ") || "Sin etiquetas"}</p>
+          </div>
+        </div>
+        <details className="product-details-drawer">
+          <summary>Ver detalles completos</summary>
+          <section className="facts">
+            <Fact l="Colores" v={item.colors.join(", ")} />
+            <Fact l="Talla" v={item.size} />
+            <Fact l="Marca" v={item.brand} />
+            <Fact l="Tienda" v={item.store} />
+            <Fact
+              l="Valoración actual"
+              v={
+                [
+                  item.currentLoveLevel && `amor ${item.currentLoveLevel}/5`,
+                  item.currentFitLevel && `fit ${item.currentFitLevel}/5`,
+                  item.currentStyleMatch && `estilo ${item.currentStyleMatch}/5`,
+                  item.comfortLevel && `comodidad ${item.comfortLevel}/5`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+            />
+            <Fact l="Uso pasado estimado" v={item.estimatedPastUse ? estimatedUses[item.estimatedPastUse] : undefined} />
+            <Fact l="Antigüedad aproximada" v={item.approximateAgeRange ? ageRanges[item.approximateAgeRange] : undefined} />
+            <Fact l="Fecha de compra" v={dateFmt(item.purchaseDate)} />
+            <Fact l="Precio original" v={item.originalPrice != null ? money(item.originalPrice) : undefined} />
+            <Fact l="Valor estimado" v={item.estimatedValue != null ? money(item.estimatedValue) : undefined} />
+            {item.soldAt && <Fact l="Vendida" v={dateFmt(item.soldAt)} />}
+            {item.notes && <Fact l="Notas" v={item.notes} />}
+            {item.doubtReason && <Fact l="Motivo de duda" v={item.doubtReason} />}
+          </section>
+        </details>
+      </section>
+    </article>
+  );
+}
+
+function OutfitVisualCard({
+  outfit,
+  data,
+  onOpen,
+  onWear,
+  onEdit,
+  onDelete,
+}: {
+  outfit: Outfit;
+  data: Data;
+  onOpen: () => void;
+  onWear: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="outfit-visual-card">
+      <button className="outfit-visual-open" onClick={onOpen}>
+        <OutfitVisualPreview outfit={outfit} items={data.items} large />
+      </button>
+      <div className="outfit-visual-copy">
+        <div>
+          <span className="eyebrow">{outfit.occasion || "LOOK"}</span>
+          <h3>
+            {outfit.name}
+            {outfit.favorite && <Heart className="filled" />}
+          </h3>
+        </div>
+        <div className="outfit-visual-flags">
+          {(outfit.wornPhoto || outfit.wornPhotos?.length) && <span>Foto real</span>}
+          {outfit.lastWornAt && <span>Probado</span>}
+        </div>
+        <div className="outfit-visual-actions">
+          <Button onClick={onWear}>Usar hoy</Button>
+          <MoreActionsMenu>
+            <button onClick={onOpen}>
+              <Camera /> Ver detalle
+            </button>
+            <button onClick={onEdit}>
+              <Pencil /> Editar
+            </button>
+            <button className="danger" onClick={onDelete}>
+              <Trash2 /> Eliminar
+            </button>
+          </MoreActionsMenu>
+        </div>
+      </div>
+    </article>
+  );
+}
 function Wardrobe() {
   const d = useData(),
     n = useNavigate();
@@ -2361,140 +2748,93 @@ function Wardrobe() {
   );
   return (
     <>
-      <PageHead
-        eyebrow={`${d.items.filter((i) => !i.isArchived).length} ACTIVAS · ${d.items.filter((i) => i.isArchived).length} ARCHIVADAS`}
-        title={archived ? "Archivo" : "Tu armario"}
-      >
+      <section className="wardrobe-gallery-head">
+        <div>
+          <p className="eyebrow">
+            {d.items.filter((i) => !i.isArchived).length} activas · {d.items.filter((i) => i.isArchived).length} archivadas
+          </p>
+          <h1>{archived ? "Archivo" : "Armario"}</h1>
+        </div>
         <Button onClick={() => n("/prenda/nueva")}>
           <Plus /> Añadir prenda
         </Button>
-      </PageHead>
-      <div className="archive-toggle">
-        <button
-          className={!archived ? "active" : ""}
-          onClick={() => setArchived(false)}
-        >
-          En mi armario
-        </button>
-        <button
-          className={archived ? "active" : ""}
-          onClick={() => setArchived(true)}
-        >
-          Archivadas
-        </button>
-      </div>
-      <div className="filters">
-        <label className="search">
+      </section>
+      <section className="wardrobe-toolbar">
+        <label className="search wardrobe-search">
           <Search />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar prendas o etiquetas..."
+            placeholder="Buscar en tu armario..."
           />
         </label>
-        <select value={cat} onChange={(e) => setCat(e.target.value)}>
-          <option value="">Categoría</option>
-          {d.settings.categories.map((x) => (
-            <option key={x}>{x}</option>
-          ))}
-        </select>
-        <select value={dec} onChange={(e) => setDec(e.target.value)}>
-          <option value="">Decisión</option>
-          {Object.entries(decisions).map(([k, v]) => (
-            <option value={k} key={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <select
-          value={spaceFilter}
-          onChange={(e) => setSpaceFilter(e.target.value)}
-        >
-          <option value="">Ubicación</option>
-          <option value="__none">Sin ubicación</option>
-          {sortedSpaces(d.spaces).map((space) => (
-              <option key={space.id} value={space.id}>
-                {spacePathText(space.id, d.spaces)}
-              </option>
-            ))}
-        </select>
-        {tags.length && (
-          <select value={tag} onChange={(e) => setTag(e.target.value)}>
-            <option value="">Etiqueta</option>
-            {tags.map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
-        )}
-        <select value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="new">Últimas añadidas</option>
-          <option value="most">Más usadas</option>
-          <option value="least">Menos usadas</option>
-          <option value="name">Nombre</option>
-        </select>
-      </div>
-      {list.length ? (
-        <div className="item-grid">
-          {list.map((i) => (
-            <NavLink
-              className={`item-card ${i.isArchived ? "archived" : ""}`}
-              to={`/prenda/${i.id}`}
-              key={i.id}
+        <div className="archive-toggle wardrobe-mode">
+          <button
+            className={!archived ? "active" : ""}
+            onClick={() => setArchived(false)}
+          >
+            En uso
+          </button>
+          <button
+            className={archived ? "active" : ""}
+            onClick={() => setArchived(true)}
+          >
+            Archivo
+          </button>
+        </div>
+        <details className="wardrobe-filter-panel">
+          <summary>
+            <Search /> Filtros
+          </summary>
+          <div className="filters">
+            <select value={cat} onChange={(e) => setCat(e.target.value)}>
+              <option value="">Categoría</option>
+              {d.settings.categories.map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+            <select value={dec} onChange={(e) => setDec(e.target.value)}>
+              <option value="">Decisión</option>
+              {Object.entries(decisions).map(([k, v]) => (
+                <option value={k} key={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <select
+              value={spaceFilter}
+              onChange={(e) => setSpaceFilter(e.target.value)}
             >
-              <div className="item-photo">
-                <ItemThumb item={i} />
-                <span
-                  className={`badge ${i.isArchived ? "archived-badge" : statusClass[i.decisionStatus]}`}
-                >
-                  {!i.isArchived &&
-                    (() => {
-                      const Icon = decisionIcons[i.decisionStatus];
-                      return <Icon />;
-                    })()}
-                  {i.isArchived
-                    ? "Fuera del armario"
-                    : decisions[i.decisionStatus]}
-                </span>
-              </div>
-              <div>
-                <h3>{i.name}</h3>
-                <p>
-                  {i.category} · {uses(i.id)} usos
-                </p>
-                <div className="card-indicators">
-                  <span>
-                    <MapPin /> {i.spaceId ? "Ubicada" : "Sin ubicación"}
-                  </span>
-                  {i.decisionStatus === "sell" && (
-                    <span>
-                      <Tag /> Venta
-                    </span>
-                  )}
-                </div>
-                <small className="item-location">
-                  {i.spaceId
-                    ? spacePathText(i.spaceId, d.spaces)
-                    : "Sin ubicación asignada"}
-                </small>
-                {i.tags?.length ? (
-                  <div className="card-tags">
-                    {i.tags.slice(0, 2).map((x) => (
-                      <span key={x}>{x}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="color-dots">
-                    {i.colors.slice(0, 4).map((c) => (
-                      <i
-                        key={c}
-                        title={c}
-                        style={{ background: colorValue(c, d.settings) }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </NavLink>
+              <option value="">Ubicación</option>
+              <option value="__none">Sin ubicación</option>
+              {sortedSpaces(d.spaces).map((space) => (
+                <option key={space.id} value={space.id}>
+                  {spacePathText(space.id, d.spaces)}
+                </option>
+              ))}
+            </select>
+            {tags.length ? (
+              <select value={tag} onChange={(e) => setTag(e.target.value)}>
+                <option value="">Etiqueta</option>
+                {tags.map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+            ) : null}
+            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="new">Últimas añadidas</option>
+              <option value="most">Más usadas</option>
+              <option value="least">Menos usadas</option>
+              <option value="name">Nombre</option>
+            </select>
+          </div>
+        </details>
+      </section>
+      <p className="wardrobe-count">{list.length} prendas visibles</p>
+      {list.length ? (
+        <div className="visual-wardrobe-grid">
+          {list.map((i) => (
+            <VisualWardrobeCard item={i} settings={d.settings} key={i.id} />
           ))}
         </div>
       ) : (
@@ -3146,212 +3486,18 @@ function ItemDetail() {
   }
   return (
     <>
-      <button className="back" onClick={() => n(-1)}>
-        <ChevronLeft /> Volver al armario
-      </button>
-      <div className="detail">
-        <div className="detail-photo">
-          <ItemThumb item={item} />
-        </div>
-        <div className="detail-copy">
-          {item.isArchived && (
-            <div className="archive-notice">
-              <Archive />
-              <span>
-                <b>Esta prenda ya no está en tu armario</b>
-                <small>
-                  {item.archiveReason
-                    ? exitLabels[item.archiveReason]
-                    : "Archivada"}{" "}
-                  · {dateFmt(item.archivedAt)}
-                </small>
-              </span>
-              <button
-                onClick={() =>
-                  db.clothingItems.update(item.id, {
-                    isArchived: false,
-                    archivedAt: undefined,
-                    archiveReason: undefined,
-                    updatedAt: now(),
-                  })
-                }
-              >
-                Restaurar
-              </button>
-            </div>
-          )}
-          <p className="eyebrow">
-            {item.category}
-            {item.subcategory && ` · ${item.subcategory}`}
-          </p>
-          <h1>{item.name}</h1>
-          <div className="detail-badges">
-            <span className={`badge ${item.decisionStatus}`}>
-              {(() => {
-                const Icon = decisionIcons[item.decisionStatus];
-                return <Icon />;
-              })()}
-              {decisions[item.decisionStatus]}
-            </span>
-            <span>
-              {(() => {
-                const Icon = physicalIcons[item.physicalStatus];
-                return <Icon />;
-              })()}
-              {physical[item.physicalStatus]}
-            </span>
-            {item.soldAt && <span>Vendida el {dateFmt(item.soldAt)}</span>}
-          </div>
-          <div className="detail-actions">
-            <Button onClick={worn}>
-              <Plus /> Usada hoy
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => n(`/prenda/${id}/editar`)}
-            >
-              <Pencil /> Editar
-            </Button>
-            <details className="action-menu">
-              <summary>Más</summary>
-              <div>
-                <button onClick={() => setReviewOpen(true)}>
-                  <Brain /> Revisar prenda
-                </button>
-                {item.decisionStatus === "sell" && !item.isArchived && (
-                  <button onClick={() => setVintedOpen(true)}>
-                    <Clipboard /> Anuncio Vinted
-                  </button>
-                )}
-                <button
-                  onClick={() =>
-                    db.clothingItems.update(item.id, {
-                      decisionStatus: "sell",
-                      updatedAt: now(),
-                    })
-                  }
-                >
-                  <Store /> Marcar para vender
-                </button>
-                <button
-                  onClick={() =>
-                    db.clothingItems.update(item.id, {
-                      decisionStatus: "donate",
-                      updatedAt: now(),
-                    })
-                  }
-                >
-                  <Archive /> Marcar para donar
-                </button>
-                <button
-                  onClick={() =>
-                    db.clothingItems.update(item.id, {
-                      isArchived: true,
-                      archivedAt: today(),
-                      archiveReason: "discarded",
-                      updatedAt: now(),
-                    })
-                  }
-                >
-                  <Archive /> Archivar
-                </button>
-                <button className="danger" onClick={remove}>
-                  <Trash2 /> Eliminar
-                </button>
-              </div>
-            </details>
-          </div>
-          <div className="use-stats">
-            <Stat label="Veces usada" value={logs.length} />
-            <Stat
-              label="Último uso"
-              value={logs[0] ? dateFmt(logs[0].date) : "Sin usos"}
-            />
-            <Stat
-              label="Coste por uso"
-              value={
-                item.originalPrice
-                  ? logs.length
-                    ? money(item.originalPrice / logs.length)
-                    : "Sin usos"
-                  : "Sin precio"
-              }
-            />
-            <Stat label="Confianza revisión" value={`${smart.confidenceScore}%`} />
-          </div>
-          <div className="detail-location">
-            <small>Ubicación</small>
-            {item.spaceId ? (
-              <NavLink to={`/espacios/${item.spaceId}`}>
-                <MapPin /> {spacePathText(item.spaceId, d.spaces)}
-              </NavLink>
-            ) : (
-              <p>Sin ubicación asignada</p>
-            )}
-          </div>
-          <section className="facts">
-            <Fact l="Colores" v={item.colors.join(", ")} />
-            <Fact l="Temporada" v={item.season.join(", ")} />
-            <Fact l="Etiquetas" v={item.tags?.join(", ")} />
-            <Fact l="Talla" v={item.size} />
-            <Fact l="Marca" v={item.brand} />
-            <Fact l="Tienda" v={item.store} />
-            <Fact
-              l="Valoración actual"
-              v={
-                [
-                  item.currentLoveLevel && `amor ${item.currentLoveLevel}/5`,
-                  item.currentFitLevel && `fit ${item.currentFitLevel}/5`,
-                  item.currentStyleMatch && `estilo ${item.currentStyleMatch}/5`,
-                  item.comfortLevel && `comodidad ${item.comfortLevel}/5`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || undefined
-              }
-            />
-            <Fact l="Uso pasado estimado" v={item.estimatedPastUse ? estimatedUses[item.estimatedPastUse] : undefined} />
-            <Fact l="Antigüedad aproximada" v={item.approximateAgeRange ? ageRanges[item.approximateAgeRange] : undefined} />
-            <Fact l="Fecha de compra" v={dateFmt(item.purchaseDate)} />
-            <Fact
-              l="Precio original"
-              v={
-                item.originalPrice != null
-                  ? money(item.originalPrice)
-                  : undefined
-              }
-            />
-            <Fact
-              l="Valor estimado"
-              v={
-                item.estimatedValue != null
-                  ? money(item.estimatedValue)
-                  : undefined
-              }
-            />
-            {item.notes && <Fact l="Notas" v={item.notes} />}
-            {item.doubtReason && <Fact l="Motivo de duda" v={item.doubtReason} />}
-          </section>
-          <details className="quick-decision">
-            <summary>Decisión rápida</summary>
-            <div>
-              {(Object.keys(decisions) as DecisionStatus[]).map((k) => (
-                <button
-                  className={item.decisionStatus === k ? "active" : ""}
-                  key={k}
-                  onClick={() =>
-                    db.clothingItems.update(item.id, {
-                      decisionStatus: k,
-                      updatedAt: now(),
-                    })
-                  }
-                >
-                  {decisions[k]}
-                </button>
-              ))}
-            </div>
-          </details>
-        </div>
-      </div>
+      <ClothingProductDetail
+        item={item}
+        data={d}
+        logs={logs}
+        smart={smart}
+        onBack={() => n(-1)}
+        onWorn={worn}
+        onEdit={() => n(`/prenda/${id}/editar`)}
+        onReview={() => setReviewOpen(true)}
+        onVinted={() => setVintedOpen(true)}
+        onRemove={remove}
+      />
       {vintedOpen && (
         <VintedModal item={item} close={() => setVintedOpen(false)} />
       )}
@@ -5971,63 +6117,31 @@ function Outfits() {
     [wearOpen, setWearOpen] = useState<Outfit | undefined>();
   return (
     <>
-      <PageHead eyebrow={`${d.outfits.length} COMBINACIONES`} title="Outfits">
+      <section className="outfits-collection-head">
+        <div>
+          <p className="eyebrow">{d.outfits.length} combinaciones</p>
+          <h1>Looks guardados</h1>
+          <p>Una colección visual de combinaciones que sabes que funcionan.</p>
+        </div>
         <Button onClick={() => n("/outfits/crear")}>
           <Plus /> Componer look
         </Button>
-      </PageHead>
+      </section>
       {d.outfits.length ? (
-        <div className="outfit-grid">
+        <div className="outfit-visual-grid">
           {d.outfits.map((o) => (
-            <article className="outfit" key={o.id}>
-              <button className="outfit-open" onClick={() => setDetailOpen(o)}>
-                <div className="outfit-collage">
-                  {(o.wornPhoto || o.wornPhotos?.[0]) && (
-                    <img
-                      className="worn-preview"
-                      src={o.wornPhoto || o.wornPhotos?.[0]}
-                      alt=""
-                    />
-                  )}
-                {o.clothingItemIds.slice(0, 3).map((id) => {
-                  const i = d.items.find((x) => x.id === id);
-                  return i && <ItemThumb key={id} item={i} />;
-                })}
-                </div>
-              </button>
-              <div>
-                <span className="eyebrow">{o.occasion || "COMBINACIÓN"}</span>
-                <h3>
-                  {o.name} {o.favorite && <Heart className="filled" />}
-                </h3>
-                <p>
-                  {o.clothingItemIds.length} prendas · {o.season.join(", ")}
-                </p>
-                <div className="outfit-status">
-                  {(o.wornPhoto || o.wornPhotos?.length) && <span>Foto real</span>}
-                  {o.lastWornAt && <span>Probado</span>}
-                  {o.fitRating && <span>Queda {o.fitRating}/5</span>}
-                </div>
-                <div className="row">
-                  <Button onClick={() => setWearOpen(o)}>Usar hoy</Button>
-                  <Button variant="ghost" onClick={() => setDetailOpen(o)}>
-                    <Camera />
-                  </Button>
-                  <Button variant="ghost" onClick={() => setEditOpen(o)}>
-                    <Pencil />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      confirm("¿Eliminar este outfit?") &&
-                      softDeleteRecords("outfits", [o.id])
-                    }
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
-            </article>
+            <OutfitVisualCard
+              key={o.id}
+              outfit={o}
+              data={d}
+              onOpen={() => setDetailOpen(o)}
+              onWear={() => setWearOpen(o)}
+              onEdit={() => setEditOpen(o)}
+              onDelete={() =>
+                confirm("¿Eliminar este outfit?") &&
+                softDeleteRecords("outfits", [o.id])
+              }
+            />
           ))}
         </div>
       ) : (

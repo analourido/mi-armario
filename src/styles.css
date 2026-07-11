@@ -437,3 +437,149 @@ details[open]>.daily-more-content,details[open]>.form-grid,details[open]>div{ani
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
 }
+
+/* Rediseño estructural: portada, galería, producto y colección */
+.home-magazine{display:grid;gap:16px}
+.home-cover{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);gap:28px;align-items:stretch;min-height:430px;border:1px solid var(--border-soft);border-radius:30px;background:linear-gradient(135deg,#fff 0%,#fff 48%,#f4f4f2 100%);overflow:hidden}
+.home-cover-copy{display:flex;flex-direction:column;justify-content:center;padding:clamp(28px,5vw,62px)}
+.home-cover-copy h1{max-width:680px;margin:10px 0 14px;font-size:clamp(42px,6vw,78px);line-height:.92;letter-spacing:-.075em}
+.home-cover-copy>p:not(.eyebrow){max-width:510px;margin:0;color:#4f4f4f;font-size:15px;line-height:1.55}
+.home-cover-copy .btn{width:max-content;margin-top:28px}
+.home-cover-weather{display:inline-flex;align-items:center;gap:9px;width:max-content;margin-top:18px;border:1px solid var(--border-soft);border-radius:999px;background:rgba(255,255,255,.8);padding:8px 12px;color:#525252;font-size:10px;font-weight:750}
+.home-cover-weather svg{width:20px;height:20px}
+.home-cover-visual{position:relative;display:grid;align-content:center;justify-items:center;min-height:100%;padding:36px;background:radial-gradient(circle at 40% 28%,rgba(255,255,255,.92),rgba(255,255,255,0) 44%),linear-gradient(160deg,#f7f7f5,#ededeb)}
+.home-cover-stack{position:relative;width:min(100%,360px);height:340px}
+.home-cover-stack a{position:absolute;overflow:hidden;border:1px solid rgba(255,255,255,.9);border-radius:26px;background:#fff;box-shadow:0 24px 60px rgba(17,17,17,.12)}
+.home-cover-stack a:nth-child(1){left:4%;top:16%;width:43%;height:60%;transform:rotate(-7deg)}
+.home-cover-stack a:nth-child(2){left:30%;top:4%;z-index:2;width:48%;height:74%}
+.home-cover-stack a:nth-child(3){right:2%;top:28%;z-index:1;width:38%;height:55%;transform:rotate(7deg)}
+.home-cover-stack a:nth-child(4){left:18%;bottom:0;width:36%;height:42%;transform:rotate(4deg)}
+.home-cover-stack img,.home-cover-stack .placeholder{width:100%;height:100%;object-fit:contain;background:linear-gradient(145deg,#fff,#f4f4f2)}
+.home-cover-visual small{position:absolute;right:24px;bottom:22px;color:#666;font-size:10px;font-weight:750}
+.home-cover-empty{display:grid;grid-template-columns:1fr 1fr;place-items:center;width:240px;height:300px;border:1px solid var(--border-soft);border-radius:28px;background:#fff;box-shadow:0 24px 60px rgba(17,17,17,.08)}
+.home-cover-empty svg{width:44px;color:#555}
+.quick-actions-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.quick-actions-strip a{display:flex;align-items:center;justify-content:center;gap:8px;min-height:54px;border:1px solid var(--border-soft);border-radius:18px;background:#fff;color:#303030;font-size:11px;font-weight:800}
+.quick-actions-strip svg{width:17px;color:#555}
+.today-suggestion{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:20px 22px;border:1px solid var(--border-soft);border-radius:22px;background:#111;color:#fff}
+.today-suggestion h2{margin:5px 0;font-size:20px;letter-spacing:-.035em}
+.today-suggestion p:not(.eyebrow){margin:0;color:rgba(255,255,255,.72);font-size:11px}
+.today-suggestion .eyebrow{color:rgba(255,255,255,.54)}
+.today-suggestion a{flex:0 0 auto;border-radius:999px;background:#fff;padding:10px 13px;color:#111;font-size:10px;font-weight:850}
+.home-visual-section{padding:4px 0}
+.home-latest-gallery{display:grid;grid-template-columns:1.25fr repeat(3,1fr);gap:10px}
+.home-latest-gallery a{display:grid;align-content:end;overflow:hidden;min-height:220px;border:1px solid var(--border-soft);border-radius:24px;background:#fff}
+.home-latest-gallery a:first-child{min-height:330px}
+.home-latest-gallery img,.home-latest-gallery .placeholder{width:100%;height:100%;min-height:0;object-fit:contain;background:linear-gradient(145deg,#fbfbfa,#efefec)}
+.home-latest-gallery span{padding:10px 12px;font-size:11px;font-weight:800}
+
+.wardrobe-gallery-head{display:flex;align-items:end;justify-content:space-between;gap:18px;margin-bottom:16px}
+.wardrobe-gallery-head h1{margin:5px 0 0;font-size:clamp(44px,6vw,76px);line-height:.92;letter-spacing:-.08em}
+.wardrobe-toolbar{position:sticky;z-index:10;top:0;display:grid;grid-template-columns:minmax(240px,1fr) auto auto;gap:8px;align-items:center;margin-bottom:9px;padding:10px;border:1px solid var(--border-soft);border-radius:20px;background:rgba(250,250,248,.9);backdrop-filter:blur(16px)}
+.wardrobe-search{height:46px;border-color:transparent;background:#fff}
+.wardrobe-mode{margin:0}
+.wardrobe-filter-panel{position:relative}
+.wardrobe-filter-panel>summary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:42px;border:1px solid var(--border);border-radius:13px;background:#fff;padding:0 13px;color:#333;font-size:10px;font-weight:800;list-style:none;cursor:pointer}
+.wardrobe-filter-panel>summary::-webkit-details-marker{display:none}
+.wardrobe-filter-panel>summary svg{width:14px}
+.wardrobe-filter-panel .filters{position:absolute;right:0;top:calc(100% + 8px);z-index:12;grid-template-columns:repeat(2,minmax(180px,1fr));width:min(580px,calc(100vw - 230px));margin:0;padding:12px;border:1px solid var(--border);border-radius:18px;background:#fff;box-shadow:0 24px 70px rgba(17,17,17,.12)}
+.wardrobe-count{margin:0 0 14px;color:var(--muted);font-size:10px;font-weight:750}
+.visual-wardrobe-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px 14px}
+.visual-wardrobe-card{display:grid;gap:10px;min-width:0}
+.visual-wardrobe-photo{position:relative;overflow:hidden;aspect-ratio:4/5;border:1px solid var(--border-soft);border-radius:24px;background:#f4f4f2}
+.visual-wardrobe-photo img,.visual-wardrobe-photo .placeholder{width:100%;height:100%;object-fit:contain}
+.visual-wardrobe-photo .badge{position:absolute;right:10px;bottom:10px;max-width:calc(100% - 20px);backdrop-filter:blur(8px)}
+.visual-wardrobe-copy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:0 3px}
+.visual-wardrobe-copy h3{grid-column:1/-1;overflow:hidden;margin:0;font-size:15px;letter-spacing:-.03em;text-overflow:ellipsis;white-space:nowrap}
+.visual-wardrobe-copy p{margin:0;color:var(--muted);font-size:10px}
+.visual-wardrobe-copy .color-dots{justify-content:flex-end;margin:0}
+
+.product-detail{display:grid;gap:18px}
+.product-back{width:max-content;margin-bottom:0}
+.product-hero{display:grid;grid-template-columns:minmax(320px,48%) minmax(0,1fr);gap:34px;align-items:stretch}
+.product-photo{position:relative;overflow:hidden;min-height:min(72vh,720px);border:1px solid var(--border-soft);border-radius:32px;background:linear-gradient(145deg,#f8f8f6,#ececea)}
+.product-photo img,.product-photo .placeholder{width:100%;height:100%;object-fit:contain}
+.product-photo .badge{position:absolute;right:18px;bottom:18px;backdrop-filter:blur(10px)}
+.product-summary{display:flex;flex-direction:column;justify-content:center;min-width:0;padding:22px 0}
+.product-summary h1{margin:8px 0 14px;font-size:clamp(42px,5vw,68px);line-height:.96;letter-spacing:-.075em}
+.product-meta-row{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:22px}
+.product-meta-row span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-soft);border-radius:999px;background:#fff;padding:7px 10px;color:#444;font-size:10px;font-weight:750}
+.product-meta-row svg{width:14px}
+.product-primary-actions{display:flex;align-items:center;gap:8px}
+.product-color-row{display:flex;gap:6px;margin-top:22px}
+.product-color-row i{width:18px;height:18px;border:1px solid var(--border);border-radius:50%}
+.product-story{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:start}
+.product-statline{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.product-info-panel{display:grid;gap:12px;padding:18px;border:1px solid var(--border-soft);border-radius:22px;background:#fff}
+.product-info-panel>div{display:grid;gap:5px}
+.product-info-panel p{margin:0;color:#333;font-size:11px;line-height:1.45}
+.product-info-panel a{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:750}
+.product-info-panel svg{width:14px}
+.product-details-drawer{grid-column:1/-1}
+.product-details-drawer>summary{display:flex;align-items:center;justify-content:center;min-height:48px;border:1px solid var(--border-soft);border-radius:16px;background:#fff;color:#333;font-size:10px;font-weight:850;list-style:none;cursor:pointer}
+.product-details-drawer>summary::-webkit-details-marker{display:none}
+
+.outfits-collection-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin-bottom:18px}
+.outfits-collection-head h1{margin:5px 0 8px;font-size:clamp(44px,6vw,74px);line-height:.92;letter-spacing:-.08em}
+.outfits-collection-head p:not(.eyebrow){max-width:450px;margin:0;color:var(--muted);font-size:12px;line-height:1.55}
+.outfit-visual-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.outfit-visual-card{overflow:hidden;border:1px solid var(--border-soft);border-radius:28px;background:#fff}
+.outfit-visual-open{display:block;width:100%;border:0;background:transparent;padding:0}
+.outfit-visual-preview{position:relative;overflow:hidden;display:grid;min-height:210px;background:linear-gradient(145deg,#f8f8f6,#eeeeeb)}
+.outfit-visual-preview.large{min-height:360px}
+.outfit-real-cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.outfit-mini-collage{position:relative;z-index:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;width:100%;height:100%;padding:18px}
+.has-real-photo .outfit-mini-collage{position:absolute;right:12px;bottom:12px;width:118px;height:96px;padding:5px;border:1px solid rgba(255,255,255,.72);border-radius:16px;background:rgba(255,255,255,.74);backdrop-filter:blur(12px)}
+.outfit-mini-collage img,.outfit-mini-collage .placeholder{width:100%;height:100%;min-height:80px;border-radius:14px;background:rgba(255,255,255,.45);object-fit:contain}
+.outfit-visual-copy{display:grid;gap:10px;padding:15px}
+.outfit-visual-copy h3{display:flex;align-items:center;gap:6px;margin:4px 0 0;font-size:19px;letter-spacing:-.045em}
+.outfit-visual-copy h3 svg{width:15px;fill:currentColor}
+.outfit-visual-flags{display:flex;gap:5px;min-height:22px}
+.outfit-visual-flags span{border:1px solid var(--border-soft);border-radius:999px;background:var(--surface-2);padding:5px 8px;color:#555;font-size:8px;font-weight:750}
+.outfit-visual-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.more-actions-menu>summary{width:38px;padding:0;font-size:0}
+.more-actions-menu>summary svg{width:16px}
+
+@media(max-width:1180px){
+  .visual-wardrobe-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .outfit-visual-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .product-story{grid-template-columns:1fr}
+}
+
+@media(max-width:900px){
+  .home-cover{grid-template-columns:1fr;min-height:0}
+  .home-cover-visual{min-height:360px}
+  .product-hero{grid-template-columns:1fr}
+  .product-photo{min-height:56vh}
+  .wardrobe-filter-panel .filters{width:min(620px,calc(100vw - 40px))}
+}
+
+@media(max-width:760px){
+  .home-cover{border-radius:24px}
+  .home-cover-copy{padding:28px 22px 12px}
+  .home-cover-copy h1{font-size:45px}
+  .home-cover-visual{min-height:270px;padding:20px}
+  .home-cover-stack{height:245px}
+  .quick-actions-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .today-suggestion{align-items:flex-start;flex-direction:column;border-radius:20px}
+  .today-suggestion a{width:100%;text-align:center}
+  .home-latest-gallery{display:flex;overflow-x:auto;margin:0 -14px;padding:0 14px 4px;scroll-snap-type:x mandatory}
+  .home-latest-gallery a,.home-latest-gallery a:first-child{flex:0 0 68%;min-height:270px;scroll-snap-align:start}
+  .wardrobe-gallery-head{align-items:flex-start;flex-direction:column}
+  .wardrobe-gallery-head h1{font-size:46px}
+  .wardrobe-toolbar{position:relative;grid-template-columns:1fr auto;top:auto;padding:8px}
+  .wardrobe-search{grid-column:1/-1}
+  .wardrobe-filter-panel .filters{right:0;grid-template-columns:1fr;width:calc(100vw - 28px)}
+  .visual-wardrobe-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 9px}
+  .visual-wardrobe-photo{border-radius:19px}
+  .visual-wardrobe-copy h3{font-size:12px}
+  .product-summary h1{font-size:40px}
+  .product-photo{min-height:52vh;border-radius:24px}
+  .product-primary-actions{position:sticky;z-index:8;bottom:72px;padding:8px;border:1px solid var(--border-soft);border-radius:16px;background:rgba(255,255,255,.92);backdrop-filter:blur(14px)}
+  .product-primary-actions .btn{flex:1}
+  .product-statline{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .outfits-collection-head{grid-template-columns:1fr}
+  .outfits-collection-head h1{font-size:46px}
+  .outfit-visual-grid{grid-template-columns:1fr}
+  .outfit-visual-preview.large{min-height:330px}
+}
