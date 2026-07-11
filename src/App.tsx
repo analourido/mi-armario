@@ -4775,6 +4775,7 @@ function TripModal({
     startDate: trip?.startDate || today(),
     endDate: trip?.endDate || today(),
     type: trip?.type || ("vacation" as Trip["type"]),
+    coverImage: trip?.coverImage || "",
     notes: trip?.notes || "",
   });
   const [query, setQuery] = useState(trip?.destinationName || ""),
@@ -4806,6 +4807,7 @@ function TripModal({
       startDate: form.startDate,
       endDate: form.endDate < form.startDate ? form.startDate : form.endDate,
       type: form.type,
+      coverImage: form.coverImage || undefined,
       notes: form.notes || undefined,
       createdAt: trip?.createdAt || stamp,
       updatedAt: stamp,
@@ -4888,6 +4890,27 @@ function TripModal({
             ))}
           </div>
         )}
+        <label className="full image-upload trip-cover-upload">
+          {form.coverImage ? (
+            <img src={form.coverImage} />
+          ) : (
+            <>
+              <ImageIcon />
+              <span>Subir portada del viaje</span>
+            </>
+          )}
+          <input
+            hidden
+            type="file"
+            accept="image/*"
+            onChange={async (e) =>
+              setForm({
+                ...form,
+                coverImage: (await compressImage(e.target.files?.[0])) || form.coverImage,
+              })
+            }
+          />
+        </label>
         <label>
           Fecha inicio
           <input
@@ -5260,6 +5283,372 @@ function TripPlannedOutfitModal({
   );
 }
 
+function tripStatusLabel(trip: Trip) {
+  const start = trip.startDate,
+    end = trip.endDate,
+    current = today();
+  if (current < start) return "Próximo";
+  if (current > end) return "Pasado";
+  return "En curso";
+}
+
+function tripWeatherHighlights(forecast: DailyWeatherSummary[]) {
+  if (!forecast.length) return ["Sin previsión todavía"];
+  const warm = forecast.filter((day) => day.temperatureMax > 23).length,
+    rain = forecast.filter((day) => `${day.description}`.toLowerCase().includes("lluv")).length,
+    coldNight = forecast.filter((day) => day.temperatureMin <= 12).length;
+  return [
+    warm ? `${warm} días cálidos` : "Temperaturas suaves",
+    rain ? "Posible lluvia" : "Sin lluvia destacada",
+    coldNight ? "Noches frescas" : "Noches cómodas",
+  ];
+}
+
+function tripRecommendationCards(
+  trip: Trip,
+  forecast: DailyWeatherSummary[],
+  stats: ReturnType<typeof tripStats>,
+  insights: ReturnType<typeof tripUsageInsights>,
+) {
+  const lines = tripRecommendationText(trip, forecast, stats.planned);
+  const hasRain = forecast.some((day) => `${day.description}`.toLowerCase().includes("lluv"));
+  const coldNight = forecast.some((day) => day.temperatureMin <= 12);
+  const warm = forecast.some((day) => day.temperatureMax > 23);
+  return [
+    {
+      icon: warm ? Sun : Shirt,
+      title: warm ? "Ropa ligera" : "Capas fáciles",
+      text: lines[0] || "Prepara prendas que puedas combinar sin pensarlo demasiado.",
+    },
+    {
+      icon: hasRain ? Umbrella : Luggage,
+      title: hasRain ? "Lluvia posible" : "Maleta práctica",
+      text: hasRain
+        ? "Prioriza zapato cerrado y una capa exterior."
+        : "Elige prendas versátiles que repitan bien.",
+    },
+    {
+      icon: coldNight ? Cloud : CalendarDays,
+      title: coldNight ? "Noche fresca" : "Looks por día",
+      text: stats.daysWithoutOutfit
+        ? `${stats.daysWithoutOutfit} días aún sin look planificado.`
+        : "Los días principales ya tienen una propuesta preparada.",
+    },
+    {
+      icon: insights.unusedPacked.length ? CircleHelp : CheckCircle,
+      title: insights.unusedPacked.length ? "Revisar maleta" : "Buen equilibrio",
+      text: insights.unusedPacked.length
+        ? "Hay prendas metidas que todavía no aparecen en ningún look."
+        : "Lo que has metido tiene función clara dentro del viaje.",
+    },
+  ];
+}
+
+function packingGroupLabel(item: TripPackingItem, clothing?: ClothingItem) {
+  const text = `${item.category || clothing?.category || item.customName || ""}`.toLowerCase();
+  if (/zapato|bota|sandalia|zapat/i.test(text)) return "Calzado";
+  if (/bolso|joya|gafa|cintur|acces/i.test(text)) return "Accesorios";
+  if (/neceser|aseo|maquill|medic|champ/i.test(text)) return "Aseo";
+  if (/docu|pasaporte|dni|billete|tarjeta/i.test(text)) return "Documentos";
+  if (clothing || /camisa|pantal|vestido|falda|jersey|ropa|abrigo/i.test(text)) return "Ropa";
+  return "Otros";
+}
+
+function TripVisualHero({
+  trip,
+  stats,
+  forecast,
+  refreshingWeather,
+  onEdit,
+  onRefreshWeather,
+  onDelete,
+  onBack,
+}: {
+  trip: Trip;
+  stats: ReturnType<typeof tripStats>;
+  forecast: DailyWeatherSummary[];
+  refreshingWeather: boolean;
+  onEdit: () => void;
+  onRefreshWeather: () => void;
+  onDelete: () => void;
+  onBack: () => void;
+}) {
+  const firstWeather = forecast[0],
+    WeatherIcon = weatherVisual(firstWeather).Icon;
+  return (
+    <section className="trip-cover">
+      {trip.coverImage ? <img className="trip-cover-image" src={trip.coverImage} alt="" /> : null}
+      <div className="trip-cover-fallback" aria-hidden="true">
+        <MapPin />
+        <span>{trip.destinationName}</span>
+      </div>
+      <div className="trip-cover-shade" />
+      <div className="trip-cover-content">
+        <button className="back trip-cover-back" onClick={onBack}>
+          <ChevronLeft /> Volver
+        </button>
+        <div>
+          <p className="eyebrow">{tripTypeLabel(trip.type)} · {tripStatusLabel(trip)}</p>
+          <h1>{trip.name}</h1>
+          <p>
+            {trip.destinationName} · {dateFmt(trip.startDate)} → {dateFmt(trip.endDate)} · {tripLength(trip)} días
+          </p>
+        </div>
+        <div className="trip-cover-chips">
+          <span><Luggage /> {stats.pending} pendientes</span>
+          <span><Heart /> {stats.outfitsPlanned} looks</span>
+          <span><CalendarDays /> {stats.daysWithoutOutfit} días sin look</span>
+          <span><WeatherIcon /> {firstWeather ? `${Math.round(firstWeather.temperatureMin)}–${Math.round(firstWeather.temperatureMax)}°C` : "Sin clima"}</span>
+        </div>
+        <div className="trip-cover-actions">
+          <Button onClick={onEdit}>
+            <Pencil /> Editar viaje
+          </Button>
+          <MoreActionsMenu>
+            <button onClick={onRefreshWeather}>
+              <Cloud /> {refreshingWeather ? "Actualizando..." : "Actualizar clima"}
+            </button>
+            <button className="danger" onClick={onDelete}>
+              <Trash2 /> Eliminar viaje
+            </button>
+          </MoreActionsMenu>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TripWeatherStory({ forecast, trip }: { forecast: DailyWeatherSummary[]; trip: Trip }) {
+  return (
+    <section className="travel-section travel-weather">
+      <div className="travel-section-head">
+        <div>
+          <p className="eyebrow">CLIMA DEL DESTINO</p>
+          <h2>Previsión para preparar la maleta</h2>
+        </div>
+        <div className="weather-story-highlights">
+          {tripWeatherHighlights(forecast).map((entry) => (
+            <span key={entry}>{entry}</span>
+          ))}
+        </div>
+      </div>
+      {forecast.length ? (
+        <div className="weather-story-grid">
+          {forecast.slice(0, tripLength(trip)).map((day) => {
+            const visual = weatherVisual(day),
+              Icon = visual.Icon;
+            return (
+              <article className="weather-day-card" key={day.date}>
+                <Icon />
+                <b>{dayLabel(day.date)}</b>
+                <strong>{Math.round(day.temperatureMin)}–{Math.round(day.temperatureMax)}°C</strong>
+                <small>{day.description}</small>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="travel-empty">
+          <CloudSun />
+          <span>
+            <b>Todavía no hay previsión disponible</b>
+            <small>El viaje puede planificarse igualmente.</small>
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TripRecommendationStory({
+  trip,
+  forecast,
+  stats,
+  insights,
+}: {
+  trip: Trip;
+  forecast: DailyWeatherSummary[];
+  stats: ReturnType<typeof tripStats>;
+  insights: ReturnType<typeof tripUsageInsights>;
+}) {
+  return (
+    <section className="travel-section">
+      <div className="travel-section-head">
+        <div>
+          <p className="eyebrow">QUÉ LLEVAR</p>
+          <h2>Recomendaciones visuales</h2>
+        </div>
+      </div>
+      <div className="travel-recommendation-grid">
+        {tripRecommendationCards(trip, forecast, stats, insights).map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.title}>
+              <Icon />
+              <b>{card.title}</b>
+              <p>{card.text}</p>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TripOutfitAgenda({
+  groupedPlanned,
+  data,
+  onAdd,
+  onEdit,
+}: {
+  groupedPlanned: {
+    date: string;
+    outfits: TripPlannedOutfit[];
+    weather?: DailyWeatherSummary;
+  }[];
+  data: Data;
+  onAdd: (date: string) => void;
+  onEdit: (planned: TripPlannedOutfit) => void;
+}) {
+  return (
+    <section className="travel-section travel-agenda">
+      <div className="travel-section-head">
+        <div>
+          <p className="eyebrow">OUTFITS DEL VIAJE</p>
+          <h2>Looks por día</h2>
+        </div>
+      </div>
+      <div className="travel-agenda-grid">
+        {groupedPlanned.map((day) => (
+          <article className={`travel-day ${day.outfits.length ? "ready" : "pending"}`} key={day.date}>
+            <header>
+              <span>{dayLabel(day.date).slice(0, 3)}</span>
+              <div>
+                <b>{dateFmt(day.date)}</b>
+                <small>{day.weather ? `${Math.round(day.weather.temperatureMin)}–${Math.round(day.weather.temperatureMax)}°C` : "Sin clima"}</small>
+              </div>
+            </header>
+            {day.outfits.length ? (
+              <div className="travel-day-looks">
+                {day.outfits.map((planned) => {
+                  const items = planned.clothingItemIds
+                    .map((itemId) => data.items.find((entry) => entry.id === itemId))
+                    .filter(Boolean) as ClothingItem[];
+                  return (
+                    <button key={planned.id} onClick={() => onEdit(planned)}>
+                      <OutfitVisualPreview items={items} />
+                      <span>
+                        <b>{planned.eventLabel || "Look listo"}</b>
+                        <small>{planned.clothingItemIds.length} prendas</small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <button className="travel-day-empty" onClick={() => onAdd(day.date)}>
+                <Plus /> Añadir look
+              </button>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TripPackingBoard({
+  stats,
+  data,
+  onToggle,
+  onEdit,
+  onAdd,
+}: {
+  stats: ReturnType<typeof tripStats>;
+  data: Data;
+  onToggle: (item: TripPackingItem) => void;
+  onEdit: (item: TripPackingItem) => void;
+  onAdd: () => void;
+}) {
+  const grouped = stats.packing.reduce<Record<string, TripPackingItem[]>>((acc, item) => {
+    const clothing = item.clothingItemId
+      ? data.items.find((entry) => entry.id === item.clothingItemId)
+      : undefined;
+    const key = packingGroupLabel(item, clothing);
+    acc[key] = [...(acc[key] || []), item];
+    return acc;
+  }, {});
+  const progress = stats.totalItems ? Math.round((stats.completed / stats.totalItems) * 100) : 0;
+  return (
+    <section className="travel-section travel-packing">
+      <div className="travel-section-head">
+        <div>
+          <p className="eyebrow">MALETA</p>
+          <h2>Checklist de viaje</h2>
+        </div>
+        <Button variant="secondary" onClick={onAdd}>
+          <Plus /> Añadir item
+        </Button>
+      </div>
+      <div className="packing-progress">
+        <div>
+          <b>{progress}%</b>
+          <span>{stats.completed}/{stats.totalItems || 0} preparado</span>
+        </div>
+        <i style={{ width: `${progress}%` }} />
+      </div>
+      {stats.packing.length ? (
+        <div className="packing-groups">
+          {Object.entries(grouped).map(([group, items]) => (
+            <div className="packing-group" key={group}>
+              <h3>{group}</h3>
+              <div className="packing-list visual">
+                {items.map((item) => {
+                  const clothing = item.clothingItemId
+                    ? data.items.find((entry) => entry.id === item.clothingItemId)
+                    : undefined;
+                  return (
+                    <article className={`packing-row ${item.checked ? "checked" : ""}`} key={item.id}>
+                      <button className="check-toggle" onClick={() => onToggle(item)}>
+                        {item.checked ? <Check /> : null}
+                      </button>
+                      <div className="packing-main">
+                        <b>{tripPackingLabel(item, data.items)}</b>
+                        <small>{tripPackingMeta(item, data.items)}</small>
+                      </div>
+                      {clothing ? (
+                        <NavLink className="packing-thumb" to={`/prenda/${clothing.id}`}>
+                          <ItemThumb item={clothing} />
+                        </NavLink>
+                      ) : (
+                        <div className="packing-thumb placeholder">
+                          <Luggage />
+                        </div>
+                      )}
+                      <button className="icon-btn" onClick={() => onEdit(item)}>
+                        <Pencil />
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="travel-empty">
+          <Luggage />
+          <span>
+            <b>Tu maleta todavía está vacía</b>
+            <small>Añade prendas del armario o imprescindibles manuales.</small>
+          </span>
+          <Button onClick={onAdd}>Añadir primer item</Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TripsPage() {
   const d = useData(),
     n = useNavigate();
@@ -5398,9 +5787,9 @@ function TripDetail() {
     return <Empty title="Viaje no encontrado" text="Puede que ya no exista." />;
   const activeTrip = safeTrip;
 
-  const stats = tripStats(d, safeTrip);
-  const insights = tripUsageInsights(d, safeTrip);
-  const upcoming = safeTrip.endDate >= today();
+  const stats = tripStats(d, activeTrip);
+  const insights = tripUsageInsights(d, activeTrip);
+  const upcoming = activeTrip.endDate >= today();
 
   const groupedPlanned = stats.dates.map((date) => ({
     date,
@@ -5474,65 +5863,19 @@ function TripDetail() {
   }
 
   return (
-    <>
-      <button className="back" onClick={() => n(-1)}>
-        <ChevronLeft /> Volver
-      </button>
+    <div className="travel-detail-page">
+      <TripVisualHero
+        trip={activeTrip}
+        stats={stats}
+        forecast={forecast}
+        refreshingWeather={refreshingWeather}
+        onBack={() => n("/viajes")}
+        onEdit={() => setTripOpen(true)}
+        onRefreshWeather={refreshDestinationWeather}
+        onDelete={deleteTrip}
+      />
 
-      <PageHead
-        eyebrow={tripTypeLabel(safeTrip.type).toUpperCase()}
-        title={safeTrip.name}
-      >
-        <div className="actions">
-          <Button variant="secondary" onClick={() => setTripOpen(true)}>
-            <Pencil /> Editar
-          </Button>
-
-          <Button
-            variant="secondary"
-            onClick={refreshDestinationWeather}
-            disabled={refreshingWeather}
-          >
-            <Cloud /> {refreshingWeather ? "Clima..." : "Actualizar clima"}
-          </Button>
-
-          <Button variant="ghost" onClick={deleteTrip}>
-            <Trash2 /> Eliminar
-          </Button>
-        </div>
-      </PageHead>
-
-      <section className="panel trip-hero">
-        <div>
-          <p className="eyebrow">DESTINO</p>
-          <h2>{safeTrip.destinationName}</h2>
-          <p className="muted">
-            {dateFmt(safeTrip.startDate)} → {dateFmt(safeTrip.endDate)} ·{" "}
-            {tripLength(safeTrip)} días
-          </p>
-          {safeTrip.notes && <p className="lead">{safeTrip.notes}</p>}
-        </div>
-
-        <div className="trip-hero-side">
-          <div className="space-capacity">
-            <b>{stats.pending}</b>
-            <small>pendientes en la maleta</small>
-          </div>
-          <div className="space-capacity">
-            <b>{stats.daysWithoutOutfit}</b>
-            <small>días todavía sin outfit</small>
-          </div>
-        </div>
-      </section>
-
-      <div className="stat-grid">
-        <Stat label="Items en maleta" value={stats.totalItems} icon={<Luggage />} />
-        <Stat label="Completados" value={stats.completed} icon={<Check />} />
-        <Stat label="Outfits planificados" value={stats.outfitsPlanned} icon={<Heart />} />
-        <Stat label="Días sin outfit" value={stats.daysWithoutOutfit} icon={<CalendarDays />} />
-      </div>
-
-      <div className="tabs">
+      <div className="travel-tabs tabs">
         <button
           className={tab === "summary" ? "active" : ""}
           onClick={() => setTab("summary")}
@@ -5555,346 +5898,110 @@ function TripDetail() {
 
       {(tab === "summary" || window.innerWidth > 760) && (
         <>
-          <div className="two-col">
-            <section className="panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">RECOMENDACIONES</p>
-                  <h2>Qué tiene sentido llevar</h2>
-                </div>
-              </div>
-
-              <div className="trip-guidance">
-                {tripRecommendationText(safeTrip, forecast, stats.planned).map(
-                  (line) => (
-                    <p key={line}>{line}</p>
-                  ),
-                )}
-              </div>
-
-              {weatherError && <p className="form-error">{weatherError}</p>}
-            </section>
-
-            <section className="panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">CLIMA DEL DESTINO</p>
-                  <h2>Vista rápida</h2>
-                </div>
-              </div>
-
-              {forecast.length ? (
-                <div className="forecast-strip">
-                  {forecast.slice(0, tripLength(safeTrip)).map((day) => (
-                    <div className="forecast-pill" key={day.date}>
-                      <b>
-                        {(() => {
-                          const visual = weatherVisual(day);
-                          const Icon = visual.Icon;
-                          return <Icon />;
-                        })()}
-                        {dayLabel(day.date).slice(0, 3)}
-                      </b>
-                      <span>
-                        {Math.round(day.temperatureMin)}–
-                        {Math.round(day.temperatureMax)}°C
-                      </span>
-                      <small>{day.description}</small>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Empty
-                  title="Clima aún no descargado"
-                  text={
-                    safeTrip.latitude != null && safeTrip.longitude != null
-                      ? "Pulsa actualizar clima para consultar el destino."
-                      : "Puedes guardar el viaje igualmente aunque no haya coordenadas todavía."
-                  }
-                />
-              )}
-            </section>
-          </div>
-
-          <div className="two-col">
-            <section className="panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">REPETICIÓN INTELIGENTE</p>
-                  <h2>Qué parece versátil y qué quizá sobra</h2>
-                </div>
-              </div>
-
-              <div className="trip-guidance">
-                {insights.repeated.length ? (
-                  <p>
-                    Se repiten bien:{" "}
-                    {insights.repeated
-                      .slice(0, 4)
-                      .map((entry) => `${entry.item?.name} (${entry.count})`)
-                      .join(" · ")}
-                  </p>
-                ) : (
-                  <p>Todavía no hay prendas repetidas entre outfits planificados.</p>
-                )}
-
-                {insights.unusedPacked.length ? (
-                  <p>
-                    Quizá sobran por ahora:{" "}
-                    {insights.unusedPacked
-                      .slice(0, 4)
-                      .map((item) => item.name)
-                      .join(" · ")}
-                  </p>
-                ) : (
-                  <p>
-                    De momento lo que has metido tiene alguna función clara dentro
-                    del viaje.
-                  </p>
-                )}
-              </div>
-            </section>
-
-            <section className="panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">ESTADO DEL VIAJE</p>
-                  <h2>Cómo va tu preparación</h2>
-                </div>
-              </div>
-
-              <div className="trip-check-grid">
-                <div>
-                  <b>{stats.completed}/{stats.totalItems || 0}</b>
-                  <small>Checklist completado</small>
-                </div>
-                <div>
-                  <b>{stats.outfitsPlanned}</b>
-                  <small>Outfits ya preparados</small>
-                </div>
-                <div>
-                  <b>{stats.daysWithoutOutfit}</b>
-                  <small>Días aún por planificar</small>
-                </div>
-                <div>
-                  <b>{upcoming ? "Próximo" : "Pasado"}</b>
-                  <small>{safeTrip.destinationName}</small>
-                </div>
-              </div>
-            </section>
-          </div>
+          <section className="travel-prep-summary">
+            <div>
+              <b>{stats.completed}/{stats.totalItems || 0}</b>
+              <span>maleta preparada</span>
+            </div>
+            <div>
+              <b>{stats.outfitsPlanned}</b>
+              <span>looks planificados</span>
+            </div>
+            <div>
+              <b>{stats.daysWithoutOutfit}</b>
+              <span>días sin look</span>
+            </div>
+            <div>
+              <b>{upcoming ? "Próximo" : "Pasado"}</b>
+              <span>{activeTrip.destinationName}</span>
+            </div>
+          </section>
+          <TripWeatherStory forecast={forecast} trip={activeTrip} />
+          {weatherError && <p className="form-error">{weatherError}</p>}
+          <TripRecommendationStory
+            trip={activeTrip}
+            forecast={forecast}
+            stats={stats}
+            insights={insights}
+          />
         </>
       )}
 
       {(tab === "packing" || window.innerWidth > 760) && (
-        <section className="panel">
-          <div className="section-title">
-            <div>
-              <p className="eyebrow">CHECKLIST DE MALETA</p>
-              <h2>Qué ya está dentro y qué falta</h2>
-            </div>
-
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPackingEditing(undefined);
-                setPackingOpen(true);
-              }}
-            >
-              <Plus /> Añadir item
-            </Button>
-          </div>
-
-          {stats.packing.length ? (
-            <div className="packing-list">
-              {stats.packing.map((item) => {
-                const clothing = item.clothingItemId
-                  ? d.items.find((entry) => entry.id === item.clothingItemId)
-                  : undefined;
-
-                return (
-                  <article
-                    className={`packing-row ${item.checked ? "checked" : ""}`}
-                    key={item.id}
-                  >
-                    <button
-                      className="check-toggle"
-                      onClick={() => togglePacked(item)}
-                    >
-                      {item.checked ? <Check /> : null}
-                    </button>
-
-                    <div className="packing-main">
-                      <b>{tripPackingLabel(item, d.items)}</b>
-                      <small>
-                        {tripPackingMeta(item, d.items)}
-                        {item.quantity && item.quantity > 1
-                          ? ` · x${item.quantity}`
-                          : ""}
-                        {item.notes ? ` · ${item.notes}` : ""}
-                      </small>
-                    </div>
-
-                    {clothing ? (
-                      <NavLink className="packing-thumb" to={`/prenda/${clothing.id}`}>
-                        <ItemThumb item={clothing} />
-                      </NavLink>
-                    ) : (
-                      <div className="packing-thumb placeholder">
-                        <Luggage />
-                      </div>
-                    )}
-
-                    <button
-                      className="icon-btn"
-                      onClick={() => {
-                        setPackingEditing(item);
-                        setPackingOpen(true);
-                      }}
-                    >
-                      <Pencil />
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <Empty
-              title="Tu maleta empieza aquí"
-              text="Añade prendas del armario o elementos manuales como cargador, neceser o documentación."
-              action={
-                <Button onClick={() => setPackingOpen(true)}>
-                  Añadir primer item
-                </Button>
-              }
-            />
-          )}
-        </section>
+        <TripPackingBoard
+          stats={stats}
+          data={d}
+          onToggle={togglePacked}
+          onEdit={(item) => {
+            setPackingEditing(item);
+            setPackingOpen(true);
+          }}
+          onAdd={() => {
+            setPackingEditing(undefined);
+            setPackingOpen(true);
+          }}
+        />
       )}
 
       {(tab === "outfits" || window.innerWidth > 760) && (
-        <section className="panel">
-          <div className="section-title">
+        <TripOutfitAgenda
+          groupedPlanned={groupedPlanned}
+          data={d}
+          onAdd={(date) => {
+            setPlannedEditing(undefined);
+            setSeedDate(date);
+            setPlannedOpen(true);
+          }}
+          onEdit={(planned) => {
+            setPlannedEditing(planned);
+            setSeedDate(planned.date);
+            setPlannedOpen(true);
+          }}
+        />
+      )}
+
+      {!!manualPlanned.length && (tab === "outfits" || window.innerWidth > 760) && (
+        <section className="travel-section">
+          <div className="travel-section-head">
             <div>
-              <p className="eyebrow">OUTFITS DEL VIAJE</p>
-              <h2>Un look por día o por momento</h2>
+              <p className="eyebrow">MOMENTOS SIN DÍA FIJO</p>
+              <h2>Looks extra</h2>
             </div>
-
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPlannedEditing(undefined);
-                setSeedDate(safeTrip.startDate);
-                setPlannedOpen(true);
-              }}
-            >
-              <Plus /> Planificar outfit
-            </Button>
           </div>
-
-          <div className="trip-day-grid">
-            {groupedPlanned.map((day) => (
-              <div className="trip-day-card" key={day.date}>
-                <header>
-                  <div>
-                    <b>{dayLabel(day.date)}</b>
-                    <small>{dateFmt(day.date)}</small>
-                  </div>
-                  {day.weather && (
-                    <span>
-                      {Math.round(day.weather.temperatureMin)}–
-                      {Math.round(day.weather.temperatureMax)}°C
-                    </span>
-                  )}
-                </header>
-
-                {day.outfits.length ? (
-                  <div className="trip-planned-list">
-                    {day.outfits.map((planned) => (
-                      <button
-                        className="trip-planned-row"
-                        key={planned.id}
-                        onClick={() => {
-                          setPlannedEditing(planned);
-                          setSeedDate(planned.date);
-                          setPlannedOpen(true);
-                        }}
-                      >
-                        <div className="trip-planned-thumbs">
-                          {planned.clothingItemIds.slice(0, 3).map((itemId) => {
-                            const item = d.items.find((entry) => entry.id === itemId);
-                            return item ? <ItemThumb key={itemId} item={item} /> : null;
-                          })}
-                        </div>
-
-                        <span>
-                          <b>{planned.eventLabel || "Look del día"}</b>
-                          <small>
-                            {planned.notes ||
-                              `${planned.clothingItemIds.length} prendas`}
-                          </small>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <button
-                    className="empty-rail"
-                    onClick={() => {
-                      setPlannedEditing(undefined);
-                      setSeedDate(day.date);
-                      setPlannedOpen(true);
-                    }}
-                  >
-                    <Plus /> Añadir outfit para este día
-                  </button>
-                )}
-              </div>
+          <div className="trip-planned-list">
+            {manualPlanned.map((planned) => (
+              <button
+                className="trip-planned-row"
+                key={planned.id}
+                onClick={() => {
+                  setPlannedEditing(planned);
+                  setSeedDate(undefined);
+                  setPlannedOpen(true);
+                }}
+              >
+                <div className="trip-planned-thumbs">
+                  {planned.clothingItemIds.slice(0, 3).map((itemId) => {
+                    const item = d.items.find((entry) => entry.id === itemId);
+                    return item ? <ItemThumb key={itemId} item={item} /> : null;
+                  })}
+                </div>
+                <span>
+                  <b>{planned.eventLabel || "Sin fecha concreta"}</b>
+                  <small>{planned.notes || `${planned.clothingItemIds.length} prendas`}</small>
+                </span>
+              </button>
             ))}
           </div>
-
-          {!!manualPlanned.length && (
-            <div className="trip-manual-planned">
-              <p className="eyebrow">MOMENTOS SIN DÍA FIJO</p>
-              <div className="trip-planned-list">
-                {manualPlanned.map((planned) => (
-                  <button
-                    className="trip-planned-row"
-                    key={planned.id}
-                    onClick={() => {
-                      setPlannedEditing(planned);
-                      setSeedDate(undefined);
-                      setPlannedOpen(true);
-                    }}
-                  >
-                    <div className="trip-planned-thumbs">
-                      {planned.clothingItemIds.slice(0, 3).map((itemId) => {
-                        const item = d.items.find((entry) => entry.id === itemId);
-                        return item ? <ItemThumb key={itemId} item={item} /> : null;
-                      })}
-                    </div>
-
-                    <span>
-                      <b>{planned.eventLabel || "Sin fecha concreta"}</b>
-                      <small>
-                        {planned.notes || `${planned.clothingItemIds.length} prendas`}
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </section>
       )}
 
       {tripOpen && (
-        <TripModal trip={safeTrip} close={() => setTripOpen(false)} />
+        <TripModal trip={activeTrip} close={() => setTripOpen(false)} />
       )}
 
       {packingOpen && (
         <TripPackingModal
-          tripId={safeTrip.id}
+          tripId={activeTrip.id}
           data={d}
           item={packingEditing}
           close={() => {
@@ -5906,7 +6013,7 @@ function TripDetail() {
 
       {plannedOpen && (
         <TripPlannedOutfitModal
-          trip={safeTrip}
+          trip={activeTrip}
           data={d}
           planned={plannedEditing}
           seedDate={seedDate}
@@ -5916,8 +6023,8 @@ function TripDetail() {
             setSeedDate(undefined);
           }}
         />
-            )}
-    </>
+      )}
+    </div>
   );
 }
 
