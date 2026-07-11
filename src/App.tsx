@@ -2718,6 +2718,20 @@ function Wardrobe() {
   const uses = (id: string) =>
     d.wears.filter((w) => w.clothingItemIds.includes(id)).length;
   const tags = [...new Set(d.items.flatMap((i) => i.tags || []))];
+  const categoryShowcase = d.settings.categories
+    .map((category) => {
+      const categoryItems = d.items
+        .filter((item) => !item.isArchived && item.category === category)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return {
+        category,
+        items: categoryItems.slice(0, 4),
+        total: categoryItems.length,
+      };
+    })
+    .filter((entry) => entry.total)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8);
   const list = useMemo(
     () =>
       d.items
@@ -2763,6 +2777,30 @@ function Wardrobe() {
           <Plus /> Añadir prenda
         </Button>
       </section>
+      {!archived && categoryShowcase.length ? (
+        <section className="wardrobe-category-stage" aria-label="Explorar por categoría">
+          {categoryShowcase.map(({ category, items, total }) => (
+            <button
+              type="button"
+              className={cat === category ? "active" : ""}
+              onClick={() => setCat(cat === category ? "" : category)}
+              key={category}
+            >
+              <span className="category-card-images">
+                {items.map((item) => (
+                  <i key={item.id}>
+                    <ItemThumb item={item} />
+                  </i>
+                ))}
+              </span>
+              <span className="category-card-copy">
+                <b>{category}</b>
+                <small>{total} prendas</small>
+              </span>
+            </button>
+          ))}
+        </section>
+      ) : null}
       <section className="wardrobe-toolbar">
         <label className="search wardrobe-search">
           <Search />
@@ -6295,6 +6333,12 @@ function Outfits() {
     [editOpen, setEditOpen] = useState<Outfit | true | false>(false),
     [detailOpen, setDetailOpen] = useState<Outfit | undefined>(),
     [wearOpen, setWearOpen] = useState<Outfit | undefined>();
+  const featuredOutfit =
+    d.outfits.find((outfit) => outfit.favorite) ||
+    [...d.outfits].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const supportingOutfits = d.outfits
+    .filter((outfit) => outfit.id !== featuredOutfit?.id)
+    .slice(0, 3);
   return (
     <>
       <section className="outfits-collection-head">
@@ -6307,6 +6351,37 @@ function Outfits() {
           <Plus /> Componer look
         </Button>
       </section>
+      {featuredOutfit ? (
+        <section className="outfit-editorial-stage">
+          <button className="outfit-editorial-main" onClick={() => setDetailOpen(featuredOutfit)}>
+            <OutfitVisualPreview outfit={featuredOutfit} items={d.items} large />
+            <span>
+              <small>{featuredOutfit.favorite ? "Favorito" : "Último editado"}</small>
+              <b>{featuredOutfit.name}</b>
+            </span>
+          </button>
+          <div className="outfit-editorial-side">
+            <p className="eyebrow">LOOKS PARA REPETIR</p>
+            <h2>Elige por sensación, no por formulario.</h2>
+            <div>
+              {supportingOutfits.map((outfit) => (
+                <button key={outfit.id} onClick={() => setDetailOpen(outfit)}>
+                  <OutfitVisualPreview outfit={outfit} items={d.items} />
+                  <span>{outfit.name}</span>
+                </button>
+              ))}
+              {!supportingOutfits.length && (
+                <button onClick={() => n("/outfits/crear")}>
+                  <div className="placeholder">
+                    <Plus />
+                  </div>
+                  <span>Crear otro look</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
       {d.outfits.length ? (
         <div className="outfit-visual-grid">
           {d.outfits.map((o) => (

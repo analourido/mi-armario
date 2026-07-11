@@ -967,3 +967,471 @@ img,.placeholder{max-width:100%}
   .flow-bottom-actions .btn{padding-left:10px;padding-right:10px}
   .trip-cover-chips span{font-size:7px}
 }
+
+/* V2.1 dirección visual: más producto, menos dashboard */
+:root{
+  --paper:#fbfbfa;
+  --mist:#f2f4f3;
+  --glass:rgba(255,255,255,.76);
+  --soft-shadow:0 24px 80px rgba(17,17,17,.08);
+  --floating-shadow:0 18px 48px rgba(17,17,17,.10);
+}
+
+body{
+  background:
+    radial-gradient(circle at 12% 8%,rgba(216,226,224,.52),transparent 28vw),
+    radial-gradient(circle at 82% 18%,rgba(239,240,232,.72),transparent 26vw),
+    linear-gradient(180deg,#fbfbfa 0%,#f7f7f5 48%,#fbfbfa 100%);
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:-1;
+  pointer-events:none;
+  opacity:.42;
+  background-image:
+    linear-gradient(rgba(17,17,17,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(17,17,17,.018) 1px,transparent 1px);
+  background-size:46px 46px;
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.6),transparent 72%);
+}
+
+.sidebar{
+  top:14px;
+  bottom:14px;
+  left:14px;
+  height:auto;
+  border:1px solid rgba(17,17,17,.06);
+  border-radius:26px;
+  background:rgba(255,255,255,.82);
+  box-shadow:0 20px 80px rgba(17,17,17,.08);
+  backdrop-filter:blur(20px);
+}
+.brand>span{border-radius:50%;background:#111}
+.sidebar nav a{
+  position:relative;
+  border:1px solid transparent;
+  border-radius:999px;
+}
+.sidebar nav a.active{
+  border-color:rgba(17,17,17,.08);
+  background:#111;
+  color:#fff;
+  box-shadow:0 10px 30px rgba(17,17,17,.13);
+}
+.sidebar nav a.active svg{color:#fff}
+.local-note{
+  border-radius:16px;
+  background:linear-gradient(145deg,#f8f8f6,#fff);
+  padding:12px;
+}
+@media (min-width:761px){
+  main{
+    width:min(calc(100vw - var(--sidebar-w) - 14px),var(--page-max));
+    margin-left:calc(var(--sidebar-w) + 14px);
+  }
+}
+
+.home-cover{
+  position:relative;
+  border:0;
+  border-radius:38px;
+  background:
+    radial-gradient(circle at 72% 28%,rgba(255,255,255,.96),transparent 24%),
+    linear-gradient(128deg,#fff 0%,#f7f8f6 42%,#e7eeed 100%);
+  box-shadow:var(--soft-shadow);
+}
+.home-cover::after{
+  content:"";
+  position:absolute;
+  right:8%;
+  bottom:-18%;
+  width:280px;
+  height:280px;
+  border:1px solid rgba(17,17,17,.05);
+  border-radius:50%;
+  background:rgba(255,255,255,.34);
+}
+.home-cover-copy{position:relative;z-index:1}
+.home-cover-copy h1{max-width:760px;font-size:clamp(46px,7vw,92px)}
+.home-cover-copy>p:not(.eyebrow){font-size:16px}
+.home-cover-weather{
+  border-color:rgba(255,255,255,.7);
+  background:rgba(255,255,255,.62);
+  box-shadow:0 12px 28px rgba(17,17,17,.05);
+}
+.home-cover-visual{
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 45% 35%,rgba(255,255,255,.94),transparent 34%),
+    linear-gradient(150deg,#eef3f2,#f7f7f4);
+}
+.home-cover-stack{filter:drop-shadow(0 26px 42px rgba(17,17,17,.12))}
+.home-cover-stack a{
+  border:0;
+  box-shadow:0 18px 46px rgba(17,17,17,.14);
+  transition:transform 240ms ease,box-shadow 240ms ease;
+}
+.home-cover-stack a:hover{box-shadow:0 28px 70px rgba(17,17,17,.18)}
+.home-cover-stack a:nth-child(1):hover{transform:rotate(-9deg) translateY(-5px)}
+.home-cover-stack a:nth-child(2):hover{transform:translateY(-7px)}
+.home-cover-stack a:nth-child(3):hover{transform:rotate(9deg) translateY(-5px)}
+.home-cover-stack a:nth-child(4):hover{transform:rotate(6deg) translateY(-4px)}
+.quick-actions-strip a{
+  min-height:58px;
+  border:0;
+  border-radius:999px;
+  background:rgba(255,255,255,.78);
+  box-shadow:0 10px 28px rgba(17,17,17,.05);
+  backdrop-filter:blur(16px);
+}
+.quick-actions-strip a:hover{background:#111;color:#fff;transform:translateY(-2px)}
+.quick-actions-strip a:hover svg{color:#fff}
+.today-suggestion{
+  border:0;
+  border-radius:28px;
+  background:
+    radial-gradient(circle at 88% 20%,rgba(255,255,255,.22),transparent 24%),
+    linear-gradient(135deg,#111,#252525);
+  box-shadow:var(--floating-shadow);
+}
+.home-latest-gallery a{
+  border:0;
+  border-radius:30px;
+  background:#fff;
+  box-shadow:0 12px 34px rgba(17,17,17,.06);
+  transition:transform 220ms ease,box-shadow 220ms ease;
+}
+.home-latest-gallery a:hover{transform:translateY(-4px);box-shadow:0 24px 60px rgba(17,17,17,.11)}
+
+.wardrobe-gallery-head{
+  align-items:center;
+  margin-bottom:18px;
+}
+.wardrobe-gallery-head h1{
+  font-size:clamp(54px,8vw,102px);
+  letter-spacing:-.095em;
+}
+.wardrobe-category-stage{
+  display:flex;
+  gap:12px;
+  overflow-x:auto;
+  margin:0 calc(clamp(0px,2vw,18px) * -1) 16px;
+  padding:2px clamp(0px,2vw,18px) 10px;
+  scroll-snap-type:x proximity;
+  scrollbar-width:none;
+}
+.wardrobe-category-stage::-webkit-scrollbar{display:none}
+.wardrobe-category-stage>button{
+  position:relative;
+  display:grid;
+  flex:0 0 245px;
+  gap:12px;
+  min-height:198px;
+  overflow:hidden;
+  border:1px solid rgba(17,17,17,.05);
+  border-radius:30px;
+  background:linear-gradient(145deg,#fff,#f3f4f2);
+  padding:14px;
+  text-align:left;
+  scroll-snap-align:start;
+  box-shadow:0 12px 36px rgba(17,17,17,.055);
+  transition:transform 220ms ease,box-shadow 220ms ease,background 220ms ease;
+}
+.wardrobe-category-stage>button:hover,
+.wardrobe-category-stage>button.active{
+  transform:translateY(-4px);
+  box-shadow:0 24px 70px rgba(17,17,17,.12);
+}
+.wardrobe-category-stage>button.active{
+  background:linear-gradient(145deg,#111,#2a2a2a);
+  color:#fff;
+}
+.category-card-images{
+  position:relative;
+  display:block;
+  height:128px;
+}
+.category-card-images i{
+  position:absolute;
+  bottom:0;
+  display:grid;
+  overflow:hidden;
+  width:42%;
+  height:112px;
+  border-radius:22px;
+  background:rgba(255,255,255,.86);
+  box-shadow:0 15px 30px rgba(17,17,17,.10);
+}
+.category-card-images i:nth-child(1){left:0;z-index:2;transform:rotate(-5deg)}
+.category-card-images i:nth-child(2){left:25%;z-index:3;height:126px}
+.category-card-images i:nth-child(3){right:8%;z-index:2;transform:rotate(5deg)}
+.category-card-images i:nth-child(4){right:-8%;opacity:.72;transform:rotate(9deg)}
+.category-card-images img,.category-card-images .placeholder{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  background:rgba(255,255,255,.5);
+}
+.category-card-copy{display:flex;align-items:end;justify-content:space-between;gap:10px}
+.category-card-copy b{font-size:18px;letter-spacing:-.045em}
+.category-card-copy small{color:var(--muted);font-size:10px;font-weight:800}
+.wardrobe-category-stage>button.active small{color:rgba(255,255,255,.66)}
+.wardrobe-toolbar{
+  border:0;
+  border-radius:24px;
+  background:rgba(255,255,255,.68);
+  box-shadow:0 16px 45px rgba(17,17,17,.06);
+}
+.wardrobe-search{
+  border-radius:18px;
+  box-shadow:inset 0 0 0 1px rgba(17,17,17,.04);
+}
+.visual-wardrobe-grid{
+  grid-template-columns:repeat(auto-fill,minmax(178px,1fr));
+  gap:30px 14px;
+}
+.visual-wardrobe-card{
+  transition:transform 220ms ease;
+}
+.visual-wardrobe-card:hover{transform:translateY(-4px)}
+.visual-wardrobe-photo{
+  border:0;
+  border-radius:30px;
+  background:
+    radial-gradient(circle at 50% 22%,#fff,transparent 42%),
+    linear-gradient(145deg,#f8f8f6,#eceeeb);
+  box-shadow:0 14px 40px rgba(17,17,17,.07);
+}
+.visual-wardrobe-photo img{transition:transform 260ms ease}
+.visual-wardrobe-card:hover .visual-wardrobe-photo img{transform:scale(1.035)}
+.visual-wardrobe-photo .badge{
+  right:12px;
+  bottom:12px;
+  border:1px solid rgba(255,255,255,.72);
+  background:rgba(255,255,255,.74);
+  color:#222;
+}
+
+.outfits-collection-head{
+  align-items:center;
+  margin-bottom:16px;
+}
+.outfits-collection-head h1{
+  font-size:clamp(50px,7vw,96px);
+  letter-spacing:-.095em;
+}
+.outfit-editorial-stage{
+  display:grid;
+  grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);
+  gap:14px;
+  margin-bottom:18px;
+}
+.outfit-editorial-main,
+.outfit-editorial-side{
+  overflow:hidden;
+  border:0;
+  border-radius:34px;
+  background:#fff;
+  box-shadow:var(--soft-shadow);
+}
+.outfit-editorial-main{
+  position:relative;
+  min-height:480px;
+  padding:0;
+  text-align:left;
+}
+.outfit-editorial-main .outfit-visual-preview.large{
+  min-height:480px;
+}
+.outfit-editorial-main>span{
+  position:absolute;
+  left:18px;
+  right:18px;
+  bottom:18px;
+  display:grid;
+  gap:4px;
+  border:1px solid rgba(255,255,255,.62);
+  border-radius:24px;
+  background:rgba(255,255,255,.76);
+  padding:14px 16px;
+  backdrop-filter:blur(18px);
+}
+.outfit-editorial-main small{
+  color:#555;
+  font-size:9px;
+  font-weight:850;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.outfit-editorial-main b{
+  font-size:28px;
+  letter-spacing:-.06em;
+}
+.outfit-editorial-side{
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  padding:24px;
+  background:
+    radial-gradient(circle at 88% 12%,rgba(255,255,255,.9),transparent 30%),
+    linear-gradient(145deg,#eef3f2,#fff);
+}
+.outfit-editorial-side h2{
+  max-width:330px;
+  margin:8px 0 22px;
+  font-size:clamp(30px,4vw,48px);
+  line-height:.98;
+  letter-spacing:-.075em;
+}
+.outfit-editorial-side>div{
+  display:grid;
+  gap:8px;
+}
+.outfit-editorial-side button{
+  display:grid;
+  grid-template-columns:82px minmax(0,1fr);
+  align-items:center;
+  gap:12px;
+  border:0;
+  border-radius:22px;
+  background:rgba(255,255,255,.78);
+  padding:8px;
+  text-align:left;
+  box-shadow:0 10px 26px rgba(17,17,17,.05);
+}
+.outfit-editorial-side .outfit-visual-preview,
+.outfit-editorial-side .placeholder{
+  min-height:82px;
+  height:82px;
+  border-radius:17px;
+}
+.outfit-editorial-side span{
+  overflow:hidden;
+  font-size:13px;
+  font-weight:850;
+  letter-spacing:-.035em;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.outfit-visual-grid{
+  grid-template-columns:repeat(auto-fill,minmax(270px,1fr));
+  gap:18px;
+}
+.outfit-visual-card{
+  border:0;
+  border-radius:32px;
+  box-shadow:0 14px 44px rgba(17,17,17,.065);
+  transition:transform 220ms ease,box-shadow 220ms ease;
+}
+.outfit-visual-card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 26px 72px rgba(17,17,17,.12);
+}
+.outfit-visual-preview{
+  background:
+    radial-gradient(circle at 50% 18%,#fff,transparent 38%),
+    linear-gradient(145deg,#f8f8f6,#e8ecea);
+}
+.outfit-mini-collage{gap:6px}
+.outfit-mini-collage img,.outfit-mini-collage .placeholder{border-radius:18px}
+
+.item-flow-card,
+.modal,
+.panel{
+  box-shadow:0 12px 36px rgba(17,17,17,.045);
+}
+.flow-photo-upload{
+  background:
+    radial-gradient(circle at 50% 30%,#fff,transparent 36%),
+    linear-gradient(145deg,#f5f6f4,#e9eeec);
+}
+
+@media (min-width:761px) and (max-width:1180px){
+  .sidebar{left:10px;top:10px;bottom:10px}
+  main{
+    width:min(calc(100vw - var(--sidebar-w) - 10px),var(--page-max));
+    margin-left:calc(var(--sidebar-w) + 10px);
+  }
+  .wardrobe-category-stage>button{flex-basis:220px}
+  .outfit-editorial-stage{grid-template-columns:1fr}
+  .outfit-editorial-side>div{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .outfit-editorial-side button{grid-template-columns:1fr}
+}
+
+@media (max-width:760px){
+  body::before{opacity:.25;background-size:34px 34px}
+  .sidebar{display:none}
+  .bottom-nav{
+    border:1px solid rgba(17,17,17,.07);
+    border-bottom:0;
+    border-radius:24px 24px 0 0;
+    background:rgba(255,255,255,.86);
+    backdrop-filter:blur(22px);
+  }
+  .bottom-nav a.active{
+    background:#111;
+    color:#fff;
+    padding:6px 9px;
+  }
+  .home-cover{
+    border-radius:32px;
+    box-shadow:0 18px 60px rgba(17,17,17,.08);
+  }
+  .home-cover-copy h1{font-size:48px}
+  .quick-actions-strip{
+    display:flex;
+    overflow-x:auto;
+    margin:0 -14px;
+    padding:0 14px 4px;
+    scroll-snap-type:x proximity;
+  }
+  .quick-actions-strip a{
+    flex:0 0 auto;
+    min-width:146px;
+    scroll-snap-align:start;
+  }
+  .wardrobe-gallery-head h1,.outfits-collection-head h1{font-size:54px}
+  .wardrobe-category-stage{
+    margin-right:-14px;
+    margin-left:-14px;
+    padding-right:14px;
+    padding-left:14px;
+  }
+  .wardrobe-category-stage>button{
+    flex-basis:74%;
+    min-height:178px;
+    border-radius:28px;
+  }
+  .category-card-images{height:112px}
+  .category-card-images i{height:98px}
+  .category-card-images i:nth-child(2){height:110px}
+  .wardrobe-toolbar{
+    position:sticky;
+    top:8px;
+    z-index:15;
+    border-radius:22px;
+  }
+  .visual-wardrobe-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:24px 10px;
+  }
+  .visual-wardrobe-photo{border-radius:24px}
+  .outfit-editorial-stage{grid-template-columns:1fr}
+  .outfit-editorial-main{min-height:390px;border-radius:30px}
+  .outfit-editorial-main .outfit-visual-preview.large{min-height:390px}
+  .outfit-editorial-main b{font-size:23px}
+  .outfit-editorial-side{
+    border-radius:30px;
+    padding:20px;
+  }
+  .outfit-editorial-side h2{font-size:34px}
+  .outfit-visual-grid{grid-template-columns:1fr}
+}
+
+@media (max-width:390px){
+  .home-cover-copy h1{font-size:42px}
+  .wardrobe-gallery-head h1,.outfits-collection-head h1{font-size:48px}
+  .wardrobe-category-stage>button{flex-basis:82%}
+}
