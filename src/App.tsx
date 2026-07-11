@@ -1485,6 +1485,10 @@ const tripTypes: Record<Trip["type"], string> = {
   other: "Otro",
 };
 
+function tripTypeLabel(type?: string) {
+  return tripTypes[type as Trip["type"]] || "Viaje";
+}
+
 const packingTemplates = [
   "cargador",
   "neceser",
@@ -4722,7 +4726,7 @@ function TripCard({
   return (
     <article className="trip-card">
       <NavLink to={`/viajes/${trip.id}`} className="trip-card-copy">
-        <p className="eyebrow">{tripTypes[trip.type]}</p>
+       <p className="eyebrow">{tripTypeLabel(trip.type)}</p>
         <h3>{trip.name}</h3>
         <p>{trip.destinationName}</p>
         <small>
@@ -5340,6 +5344,7 @@ function TripDetail() {
     d = useData(),
     n = useNavigate(),
     trip = d.trips.find((entry) => entry.id === id);
+
   const [tripOpen, setTripOpen] = useState(false),
     [packingOpen, setPackingOpen] = useState(false),
     [plannedOpen, setPlannedOpen] = useState(false),
@@ -5349,37 +5354,73 @@ function TripDetail() {
     [tab, setTab] = useState<"summary" | "packing" | "outfits">("summary"),
     [refreshingWeather, setRefreshingWeather] = useState(false),
     [weatherError, setWeatherError] = useState("");
-  if (!trip)
+
+  const safeTrip: Trip | undefined = trip
+    ? {
+        ...trip,
+        name: trip.name || "Viaje",
+        destinationName: trip.destinationName || "Destino sin indicar",
+        startDate: trip.startDate || today(),
+        endDate: trip.endDate || trip.startDate || today(),
+        type: (trip.type || "other") as Trip["type"],
+        createdAt: trip.createdAt || now(),
+        updatedAt: trip.updatedAt || now(),
+      }
+    : undefined;
+
+  const forecast = safeTrip ? tripForecast(d.weatherCache, safeTrip.id) : [];
+
+  useEffect(() => {
+    if (
+      !safeTrip ||
+      safeTrip.latitude == null ||
+      safeTrip.longitude == null ||
+      forecast.length
+    )
+      return;
+
+    setRefreshingWeather(true);
+    refreshTripWeather(safeTrip, Math.max(tripLength(safeTrip), 3))
+      .catch(() =>
+        setWeatherError("No hemos podido traer el clima del destino ahora mismo."),
+      )
+      .finally(() => setRefreshingWeather(false));
+  }, [
+    safeTrip?.id,
+    safeTrip?.latitude,
+    safeTrip?.longitude,
+    safeTrip?.startDate,
+    safeTrip?.endDate,
+    forecast.length,
+  ]);
+
+  if (!safeTrip)
     return <Empty title="Viaje no encontrado" text="Puede que ya no exista." />;
-  const currentTrip = trip;
-  const stats = tripStats(d, currentTrip);
-  const forecast = tripForecast(d.weatherCache, currentTrip.id);
-  const insights = tripUsageInsights(d, currentTrip);
-  const upcoming = currentTrip.endDate >= today();
+  const activeTrip = safeTrip;
+
+  const stats = tripStats(d, safeTrip);
+  const insights = tripUsageInsights(d, safeTrip);
+  const upcoming = safeTrip.endDate >= today();
+
   const groupedPlanned = stats.dates.map((date) => ({
     date,
     outfits: stats.planned.filter((entry) => entry.date === date),
     weather: forecast.find((entry) => entry.date === date),
   }));
+
   const manualPlanned = stats.planned.filter((entry) => !entry.date);
 
-  useEffect(() => {
-    if (currentTrip.latitude == null || currentTrip.longitude == null || forecast.length) return;
-    setRefreshingWeather(true);
-    refreshTripWeather(currentTrip, Math.max(tripLength(currentTrip), 3))
-      .catch(() => setWeatherError("No hemos podido traer el clima del destino ahora mismo."))
-      .finally(() => setRefreshingWeather(false));
-  }, [currentTrip, forecast.length]);
-
   async function refreshDestinationWeather() {
-    if (currentTrip.latitude == null || currentTrip.longitude == null) {
+    if (activeTrip.latitude == null || activeTrip.longitude == null) {
       setWeatherError("Guarda un destino con coordenadas para consultar el clima.");
       return;
     }
+
     setRefreshingWeather(true);
     setWeatherError("");
+
     try {
-      await refreshTripWeather(currentTrip, Math.max(tripLength(currentTrip), 3));
+      await refreshTripWeather(activeTrip, Math.max(tripLength(activeTrip), 3));
     } catch {
       setWeatherError("No hemos podido traer el clima del destino ahora mismo.");
     } finally {
@@ -5395,28 +5436,40 @@ function TripDetail() {
   }
 
   async function deleteTrip() {
-    if (!confirm(`¿Eliminar “${currentTrip.name}” y toda su planificación?`)) return;
+    if (!confirm(`¿Eliminar “${activeTrip.name}” y toda su planificación?`)) return;
+
     const weatherKeys = d.weatherCache
-      .filter((entry) => entry.locationId === tripWeatherKey(currentTrip.id))
+      .filter((entry) => entry.locationId === tripWeatherKey(activeTrip.id))
       .map((entry) => entry.id);
+
     await db.transaction(
       "rw",
-      [db.trips, db.tripPackingItems, db.tripPlannedOutfits, db.weatherCache, db.syncDeletes],
+      [
+        db.trips,
+        db.tripPackingItems,
+        db.tripPlannedOutfits,
+        db.weatherCache,
+        db.syncDeletes,
+      ],
       async () => {
         if (stats.packing.length)
           await softDeleteRecords(
             "tripPackingItems",
             stats.packing.map((entry) => entry.id),
           );
+
         if (stats.planned.length)
           await softDeleteRecords(
             "tripPlannedOutfits",
             stats.planned.map((entry) => entry.id),
           );
-        await softDeleteRecords("trips", [currentTrip.id]);
+
+        await softDeleteRecords("trips", [activeTrip.id]);
+
         if (weatherKeys.length) await db.weatherCache.bulkDelete(weatherKeys);
       },
     );
+
     n("/viajes");
   }
 
@@ -5425,28 +5478,41 @@ function TripDetail() {
       <button className="back" onClick={() => n(-1)}>
         <ChevronLeft /> Volver
       </button>
-      <PageHead eyebrow={tripTypes[currentTrip.type].toUpperCase()} title={currentTrip.name}>
+
+      <PageHead
+        eyebrow={tripTypeLabel(safeTrip.type).toUpperCase()}
+        title={safeTrip.name}
+      >
         <div className="actions">
           <Button variant="secondary" onClick={() => setTripOpen(true)}>
             <Pencil /> Editar
           </Button>
-          <Button variant="secondary" onClick={refreshDestinationWeather} disabled={refreshingWeather}>
+
+          <Button
+            variant="secondary"
+            onClick={refreshDestinationWeather}
+            disabled={refreshingWeather}
+          >
             <Cloud /> {refreshingWeather ? "Clima..." : "Actualizar clima"}
           </Button>
+
           <Button variant="ghost" onClick={deleteTrip}>
             <Trash2 /> Eliminar
           </Button>
         </div>
       </PageHead>
+
       <section className="panel trip-hero">
         <div>
           <p className="eyebrow">DESTINO</p>
-          <h2>{currentTrip.destinationName}</h2>
+          <h2>{safeTrip.destinationName}</h2>
           <p className="muted">
-            {dateFmt(currentTrip.startDate)} → {dateFmt(currentTrip.endDate)} · {tripLength(currentTrip)} días
+            {dateFmt(safeTrip.startDate)} → {dateFmt(safeTrip.endDate)} ·{" "}
+            {tripLength(safeTrip)} días
           </p>
-          {currentTrip.notes && <p className="lead">{currentTrip.notes}</p>}
+          {safeTrip.notes && <p className="lead">{safeTrip.notes}</p>}
         </div>
+
         <div className="trip-hero-side">
           <div className="space-capacity">
             <b>{stats.pending}</b>
@@ -5458,23 +5524,35 @@ function TripDetail() {
           </div>
         </div>
       </section>
+
       <div className="stat-grid">
         <Stat label="Items en maleta" value={stats.totalItems} icon={<Luggage />} />
         <Stat label="Completados" value={stats.completed} icon={<Check />} />
         <Stat label="Outfits planificados" value={stats.outfitsPlanned} icon={<Heart />} />
         <Stat label="Días sin outfit" value={stats.daysWithoutOutfit} icon={<CalendarDays />} />
       </div>
+
       <div className="tabs">
-        <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>
+        <button
+          className={tab === "summary" ? "active" : ""}
+          onClick={() => setTab("summary")}
+        >
           Resumen
         </button>
-        <button className={tab === "packing" ? "active" : ""} onClick={() => setTab("packing")}>
+        <button
+          className={tab === "packing" ? "active" : ""}
+          onClick={() => setTab("packing")}
+        >
           Maleta
         </button>
-        <button className={tab === "outfits" ? "active" : ""} onClick={() => setTab("outfits")}>
+        <button
+          className={tab === "outfits" ? "active" : ""}
+          onClick={() => setTab("outfits")}
+        >
           Outfits
         </button>
       </div>
+
       {(tab === "summary" || window.innerWidth > 760) && (
         <>
           <div className="two-col">
@@ -5485,13 +5563,18 @@ function TripDetail() {
                   <h2>Qué tiene sentido llevar</h2>
                 </div>
               </div>
+
               <div className="trip-guidance">
-                {tripRecommendationText(currentTrip, forecast, stats.planned).map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
+                {tripRecommendationText(safeTrip, forecast, stats.planned).map(
+                  (line) => (
+                    <p key={line}>{line}</p>
+                  ),
+                )}
               </div>
+
               {weatherError && <p className="form-error">{weatherError}</p>}
             </section>
+
             <section className="panel">
               <div className="section-title">
                 <div>
@@ -5499,9 +5582,10 @@ function TripDetail() {
                   <h2>Vista rápida</h2>
                 </div>
               </div>
+
               {forecast.length ? (
                 <div className="forecast-strip">
-                  {forecast.slice(0, tripLength(currentTrip)).map((day) => (
+                  {forecast.slice(0, tripLength(safeTrip)).map((day) => (
                     <div className="forecast-pill" key={day.date}>
                       <b>
                         {(() => {
@@ -5511,7 +5595,10 @@ function TripDetail() {
                         })()}
                         {dayLabel(day.date).slice(0, 3)}
                       </b>
-                      <span>{Math.round(day.temperatureMin)}–{Math.round(day.temperatureMax)}°C</span>
+                      <span>
+                        {Math.round(day.temperatureMin)}–
+                        {Math.round(day.temperatureMax)}°C
+                      </span>
                       <small>{day.description}</small>
                     </div>
                   ))}
@@ -5520,7 +5607,7 @@ function TripDetail() {
                 <Empty
                   title="Clima aún no descargado"
                   text={
-                    currentTrip.latitude != null && currentTrip.longitude != null
+                    safeTrip.latitude != null && safeTrip.longitude != null
                       ? "Pulsa actualizar clima para consultar el destino."
                       : "Puedes guardar el viaje igualmente aunque no haya coordenadas todavía."
                   }
@@ -5528,6 +5615,7 @@ function TripDetail() {
               )}
             </section>
           </div>
+
           <div className="two-col">
             <section className="panel">
               <div className="section-title">
@@ -5536,10 +5624,12 @@ function TripDetail() {
                   <h2>Qué parece versátil y qué quizá sobra</h2>
                 </div>
               </div>
+
               <div className="trip-guidance">
                 {insights.repeated.length ? (
                   <p>
-                    Se repiten bien: {insights.repeated
+                    Se repiten bien:{" "}
+                    {insights.repeated
                       .slice(0, 4)
                       .map((entry) => `${entry.item?.name} (${entry.count})`)
                       .join(" · ")}
@@ -5547,18 +5637,24 @@ function TripDetail() {
                 ) : (
                   <p>Todavía no hay prendas repetidas entre outfits planificados.</p>
                 )}
+
                 {insights.unusedPacked.length ? (
                   <p>
-                    Quizá sobran por ahora: {insights.unusedPacked
+                    Quizá sobran por ahora:{" "}
+                    {insights.unusedPacked
                       .slice(0, 4)
                       .map((item) => item.name)
                       .join(" · ")}
                   </p>
                 ) : (
-                  <p>De momento lo que has metido tiene alguna función clara dentro del viaje.</p>
+                  <p>
+                    De momento lo que has metido tiene alguna función clara dentro
+                    del viaje.
+                  </p>
                 )}
               </div>
             </section>
+
             <section className="panel">
               <div className="section-title">
                 <div>
@@ -5566,6 +5662,7 @@ function TripDetail() {
                   <h2>Cómo va tu preparación</h2>
                 </div>
               </div>
+
               <div className="trip-check-grid">
                 <div>
                   <b>{stats.completed}/{stats.totalItems || 0}</b>
@@ -5581,13 +5678,14 @@ function TripDetail() {
                 </div>
                 <div>
                   <b>{upcoming ? "Próximo" : "Pasado"}</b>
-                  <small>{currentTrip.destinationName}</small>
+                  <small>{safeTrip.destinationName}</small>
                 </div>
               </div>
             </section>
           </div>
         </>
       )}
+
       {(tab === "packing" || window.innerWidth > 760) && (
         <section className="panel">
           <div className="section-title">
@@ -5595,6 +5693,7 @@ function TripDetail() {
               <p className="eyebrow">CHECKLIST DE MALETA</p>
               <h2>Qué ya está dentro y qué falta</h2>
             </div>
+
             <Button
               variant="secondary"
               onClick={() => {
@@ -5605,25 +5704,37 @@ function TripDetail() {
               <Plus /> Añadir item
             </Button>
           </div>
+
           {stats.packing.length ? (
             <div className="packing-list">
               {stats.packing.map((item) => {
                 const clothing = item.clothingItemId
                   ? d.items.find((entry) => entry.id === item.clothingItemId)
                   : undefined;
+
                 return (
-                  <article className={`packing-row ${item.checked ? "checked" : ""}`} key={item.id}>
-                    <button className="check-toggle" onClick={() => togglePacked(item)}>
+                  <article
+                    className={`packing-row ${item.checked ? "checked" : ""}`}
+                    key={item.id}
+                  >
+                    <button
+                      className="check-toggle"
+                      onClick={() => togglePacked(item)}
+                    >
                       {item.checked ? <Check /> : null}
                     </button>
+
                     <div className="packing-main">
                       <b>{tripPackingLabel(item, d.items)}</b>
                       <small>
                         {tripPackingMeta(item, d.items)}
-                        {item.quantity && item.quantity > 1 ? ` · x${item.quantity}` : ""}
+                        {item.quantity && item.quantity > 1
+                          ? ` · x${item.quantity}`
+                          : ""}
                         {item.notes ? ` · ${item.notes}` : ""}
                       </small>
                     </div>
+
                     {clothing ? (
                       <NavLink className="packing-thumb" to={`/prenda/${clothing.id}`}>
                         <ItemThumb item={clothing} />
@@ -5633,6 +5744,7 @@ function TripDetail() {
                         <Luggage />
                       </div>
                     )}
+
                     <button
                       className="icon-btn"
                       onClick={() => {
@@ -5650,11 +5762,16 @@ function TripDetail() {
             <Empty
               title="Tu maleta empieza aquí"
               text="Añade prendas del armario o elementos manuales como cargador, neceser o documentación."
-              action={<Button onClick={() => setPackingOpen(true)}>Añadir primer item</Button>}
+              action={
+                <Button onClick={() => setPackingOpen(true)}>
+                  Añadir primer item
+                </Button>
+              }
             />
           )}
         </section>
       )}
+
       {(tab === "outfits" || window.innerWidth > 760) && (
         <section className="panel">
           <div className="section-title">
@@ -5662,17 +5779,19 @@ function TripDetail() {
               <p className="eyebrow">OUTFITS DEL VIAJE</p>
               <h2>Un look por día o por momento</h2>
             </div>
+
             <Button
               variant="secondary"
               onClick={() => {
                 setPlannedEditing(undefined);
-                setSeedDate(currentTrip.startDate);
+                setSeedDate(safeTrip.startDate);
                 setPlannedOpen(true);
               }}
             >
               <Plus /> Planificar outfit
             </Button>
           </div>
+
           <div className="trip-day-grid">
             {groupedPlanned.map((day) => (
               <div className="trip-day-card" key={day.date}>
@@ -5683,10 +5802,12 @@ function TripDetail() {
                   </div>
                   {day.weather && (
                     <span>
-                      {Math.round(day.weather.temperatureMin)}–{Math.round(day.weather.temperatureMax)}°C
+                      {Math.round(day.weather.temperatureMin)}–
+                      {Math.round(day.weather.temperatureMax)}°C
                     </span>
                   )}
                 </header>
+
                 {day.outfits.length ? (
                   <div className="trip-planned-list">
                     {day.outfits.map((planned) => (
@@ -5705,9 +5826,13 @@ function TripDetail() {
                             return item ? <ItemThumb key={itemId} item={item} /> : null;
                           })}
                         </div>
+
                         <span>
                           <b>{planned.eventLabel || "Look del día"}</b>
-                          <small>{planned.notes || `${planned.clothingItemIds.length} prendas`}</small>
+                          <small>
+                            {planned.notes ||
+                              `${planned.clothingItemIds.length} prendas`}
+                          </small>
                         </span>
                       </button>
                     ))}
@@ -5727,6 +5852,7 @@ function TripDetail() {
               </div>
             ))}
           </div>
+
           {!!manualPlanned.length && (
             <div className="trip-manual-planned">
               <p className="eyebrow">MOMENTOS SIN DÍA FIJO</p>
@@ -5747,9 +5873,12 @@ function TripDetail() {
                         return item ? <ItemThumb key={itemId} item={item} /> : null;
                       })}
                     </div>
+
                     <span>
                       <b>{planned.eventLabel || "Sin fecha concreta"}</b>
-                      <small>{planned.notes || `${planned.clothingItemIds.length} prendas`}</small>
+                      <small>
+                        {planned.notes || `${planned.clothingItemIds.length} prendas`}
+                      </small>
                     </span>
                   </button>
                 ))}
@@ -5758,10 +5887,14 @@ function TripDetail() {
           )}
         </section>
       )}
-      {tripOpen && <TripModal trip={currentTrip} close={() => setTripOpen(false)} />}
+
+      {tripOpen && (
+        <TripModal trip={safeTrip} close={() => setTripOpen(false)} />
+      )}
+
       {packingOpen && (
         <TripPackingModal
-          tripId={currentTrip.id}
+          tripId={safeTrip.id}
           data={d}
           item={packingEditing}
           close={() => {
@@ -5770,9 +5903,10 @@ function TripDetail() {
           }}
         />
       )}
+
       {plannedOpen && (
         <TripPlannedOutfitModal
-          trip={currentTrip}
+          trip={safeTrip}
           data={d}
           planned={plannedEditing}
           seedDate={seedDate}
@@ -5782,7 +5916,7 @@ function TripDetail() {
             setSeedDate(undefined);
           }}
         />
-      )}
+            )}
     </>
   );
 }
